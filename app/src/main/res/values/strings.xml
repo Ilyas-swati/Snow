@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Snow AI</string>
+    <string name="accessibility_service_description">Enables Snow AI to interact with WhatsApp messages and control device settings hands-free.</string>
+    <string name="voice_channel_name">Snow AI Voice Service</string>
+    <string name="voice_channel_desc">Maintains wake word listening in background.</string>
+    <string name="listening_status">Listening for "Snow"…</string>
+    <string name="speaking_status">Snow is speaking…</string>
+    <string name="thinking_status">Processing your request…</string>
+    <string name="idle_status">Tap the orb to speak or configure</string>
+</resources>

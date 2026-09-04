@@ -1,0 +1,7 @@
+{
+  "name": "Snow AI",
+  "description": "Intelligent voice assistant with glowing orb, real-time voice conversation, device control, and vision.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
