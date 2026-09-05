@@ -20,4 +20,10 @@ interface ChatDao {
 
     @Query("SELECT * FROM chat_messages ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int): List<ChatMessage>
+
+    @Query("SELECT * FROM chat_messages WHERE content LIKE '%' || :query || '%' ORDER BY timestamp DESC")
+    fun searchMessages(query: String): Flow<List<ChatMessage>>
+
+    @Query("DELETE FROM chat_messages WHERE id = :id")
+    suspend fun deleteMessage(id: Long)
 }

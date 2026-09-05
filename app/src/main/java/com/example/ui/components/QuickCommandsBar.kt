@@ -36,13 +36,15 @@ fun QuickCommandsBar(
     modifier: Modifier = Modifier
 ) {
     val commands = listOf(
+        QuickCommand("Roman Urdu: Kal uthana", "Snow kal mujhe 8 baje uthana", Icons.Default.Language),
+        QuickCommand("Roman Urdu: Weather", "Snow mujhe batao weather kaisa hai", Icons.Default.Language),
+        QuickCommand("اردو: یہ کام کر دو", "Snow یہ کام کر دو", Icons.Default.Language),
+        QuickCommand("پښتو خبرې", "Snow ma sara Pukhto ke khabara kawa", Icons.Default.Language),
+        QuickCommand("Hindi: नमस्ते स्नो", "नमस्ते स्नो, आप कैसी हैं?", Icons.Default.Language),
         QuickCommand("Open WhatsApp", "Open WhatsApp application", Icons.AutoMirrored.Filled.Message),
         QuickCommand("Flashlight On", "Turn on device flashlight", Icons.Default.FlashlightOn),
-        QuickCommand("اردو میں بولو", "اردو میں بات کرو، آپ کیسی ہیں؟", Icons.Default.Language),
-        QuickCommand("پښتو خبرې", "سلام واوره، تاسو څنګه یاست؟", Icons.Default.Language),
         QuickCommand("Volume Up", "Turn up music volume", Icons.AutoMirrored.Filled.VolumeUp),
-        QuickCommand("Open Camera", "Open Camera app", Icons.Default.CameraAlt),
-        QuickCommand("What can you do?", "Snow, what are your full capabilities as an AI agent?")
+        QuickCommand("What can you do?", "Snow, what are your full capabilities as an AI voice agent?")
     )
 
     Row(

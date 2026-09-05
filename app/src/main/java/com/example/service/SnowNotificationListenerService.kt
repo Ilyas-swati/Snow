@@ -21,6 +21,14 @@ class SnowNotificationListenerService : NotificationListenerService() {
         private val _latestNotification = MutableStateFlow<ReceivedNotification?>(null)
         val latestNotification: StateFlow<ReceivedNotification?> = _latestNotification.asStateFlow()
 
+        private val recentNotificationsList = java.util.Collections.synchronizedList(mutableListOf<ReceivedNotification>())
+
+        fun getRecentNotifications(): List<ReceivedNotification> {
+            synchronized(recentNotificationsList) {
+                return recentNotificationsList.toList()
+            }
+        }
+
         var isConnected: Boolean = false
             private set
     }
@@ -46,13 +54,19 @@ class SnowNotificationListenerService : NotificationListenerService() {
         val title = extras.getString(Notification.EXTRA_TITLE) ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
 
-        if (pkg == "com.whatsapp" && text.isNotBlank()) {
-            Log.d("SnowNotification", "WhatsApp notification from $title: $text")
-            _latestNotification.value = ReceivedNotification(
+        if (text.isNotBlank()) {
+            val item = ReceivedNotification(
                 packageName = pkg,
-                sender = title,
+                sender = title.ifBlank { pkg.substringAfterLast('.') },
                 message = text
             )
+            _latestNotification.value = item
+            synchronized(recentNotificationsList) {
+                recentNotificationsList.add(0, item)
+                if (recentNotificationsList.size > 15) {
+                    recentNotificationsList.removeAt(recentNotificationsList.size - 1)
+                }
+            }
         }
     }
 }

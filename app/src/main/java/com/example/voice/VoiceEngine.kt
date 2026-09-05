@@ -10,9 +10,9 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.speech.tts.Voice
 import android.util.Log
 import com.example.data.SnowPreferences
+import com.example.voice.provider.TTSProviderManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +37,7 @@ class VoiceEngine(
 ) : TextToSpeech.OnInitListener, RecognitionListener {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val coroutineScope = CoroutineScope(Dispatchers.Main)
     private var textToSpeech: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var isTtsReady = false
@@ -50,8 +51,38 @@ class VoiceEngine(
     private val _partialTranscript = MutableStateFlow("")
     val partialTranscript: StateFlow<String> = _partialTranscript.asStateFlow()
 
+    private val _statusMessage = MutableStateFlow("")
+    val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
+
     private var isContinuousListeningRequested = true
     private var isSpeaking = false
+
+    val ttsProviderManager = TTSProviderManager(
+        context = context,
+        preferences = preferences,
+        getTextToSpeech = { textToSpeech },
+        onPlaybackStarted = {
+            isSpeaking = true
+            _voiceState.value = VoiceState.SPEAKING
+        },
+        onPlaybackCompleted = {
+            isSpeaking = false
+            _voiceState.value = VoiceState.IDLE
+            if (isContinuousListeningRequested && preferences.continuousListening) {
+                mainHandler.postDelayed({
+                    startListening()
+                }, 400)
+            }
+        },
+        onAmplitudeChanged = { amp ->
+            if (isSpeaking) {
+                _rmsAmplitude.value = amp
+            }
+        },
+        onProviderFallback = { failedProvider, reason ->
+            _statusMessage.value = "Falling back to System TTS: $reason"
+        }
+    )
 
     init {
         initTts()
@@ -102,7 +133,9 @@ class VoiceEngine(
         if (!isTtsReady) return
 
         val targetLocale = when (language) {
+            SnowPreferences.LANG_HI -> Locale("hi", "IN")
             SnowPreferences.LANG_UR -> Locale("ur", "PK")
+            SnowPreferences.LANG_ROMAN_UR -> Locale("hi", "IN")
             SnowPreferences.LANG_PS -> Locale("ps", "AF")
             else -> Locale.US
         }
@@ -112,11 +145,9 @@ class VoiceEngine(
             tts.setLanguage(Locale.US)
         }
 
-        // Apply pitch (female higher pitch) and speech rate
         tts.setPitch(preferences.femaleVoicePitch)
         tts.setSpeechRate(preferences.speechRate)
 
-        // Select female voice if available
         try {
             val voices = tts.voices
             if (!voices.isNullOrEmpty()) {
@@ -136,14 +167,35 @@ class VoiceEngine(
     }
 
     fun speak(text: String, language: String = "English") {
+        if (!preferences.autoSpeakEnabled) {
+            _voiceState.value = VoiceState.IDLE
+            if (isContinuousListeningRequested && preferences.continuousListening) {
+                mainHandler.postDelayed({ startListening() }, 400)
+            }
+            return
+        }
+
+        // Stop current listening to avoid audio feedback
+        stopListeningInternal()
+
+        coroutineScope.launch {
+            ttsProviderManager.synthesizeAndPlay(
+                text = text,
+                language = language,
+                onSystemTtsRequested = {
+                    speakWithSystemTts(text, language)
+                }
+            )
+        }
+    }
+
+    private fun speakWithSystemTts(text: String, language: String) {
         val tts = textToSpeech ?: return
         if (!isTtsReady) return
 
-        // Stop current listening to avoid echo
-        stopListeningInternal()
-
-        // Configure voice for target language
         val locale = when {
+            language.contains("Hindi", ignoreCase = true) || preferences.languageMode == SnowPreferences.LANG_HI -> Locale("hi", "IN")
+            language.contains("Roman", ignoreCase = true) || preferences.languageMode == SnowPreferences.LANG_ROMAN_UR -> Locale("hi", "IN")
             language.contains("Urdu", ignoreCase = true) || preferences.languageMode == SnowPreferences.LANG_UR -> Locale("ur", "PK")
             language.contains("Pashto", ignoreCase = true) || preferences.languageMode == SnowPreferences.LANG_PS -> Locale("ps", "AF")
             else -> Locale.US
@@ -162,11 +214,13 @@ class VoiceEngine(
         }
 
         _voiceState.value = VoiceState.SPEAKING
+        isSpeaking = true
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "SNOW_REPLY")
     }
 
     fun stopSpeaking() {
         textToSpeech?.stop()
+        ttsProviderManager.stopAudio()
         isSpeaking = false
         if (_voiceState.value == VoiceState.SPEAKING) {
             _voiceState.value = VoiceState.IDLE
@@ -175,8 +229,8 @@ class VoiceEngine(
 
     fun startListening() {
         mainHandler.post {
-            // Interruption handling: if currently speaking, user starting to speak stops AI immediately
-            if (isSpeaking) {
+            // Immediate interruption handling: if currently speaking, stop AI output immediately
+            if (isSpeaking && preferences.interruptWhileSpeaking) {
                 stopSpeaking()
             }
 
@@ -199,7 +253,9 @@ class VoiceEngine(
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
 
                     val languageTag = when (preferences.languageMode) {
+                        SnowPreferences.LANG_HI -> "hi-IN"
                         SnowPreferences.LANG_UR -> "ur-PK"
+                        SnowPreferences.LANG_ROMAN_UR -> "en-IN"
                         SnowPreferences.LANG_PS -> "ps-AF"
                         SnowPreferences.LANG_EN -> "en-US"
                         else -> Locale.getDefault().toLanguageTag()
@@ -250,7 +306,7 @@ class VoiceEngine(
 
     override fun onBeginningOfSpeech() {
         // Interruption handling: User started speaking while AI was speaking
-        if (isSpeaking) {
+        if (isSpeaking && preferences.interruptWhileSpeaking) {
             stopSpeaking()
         }
         _voiceState.value = VoiceState.LISTENING
@@ -318,14 +374,20 @@ class VoiceEngine(
     private fun checkWakeWord(text: String): Boolean {
         if (!preferences.wakeWordEnabled) return false
         val lower = text.lowercase()
+        val customWake = preferences.wakePhrase.trim().lowercase()
+        if (customWake.isNotBlank() && lower.contains(customWake)) return true
         return lower.contains("snow") || lower.contains("hey snow") || text.contains("سنو") || text.contains("واوره")
     }
 
     private fun checkWakeWordAndDispatch(text: String, isFinal: Boolean) {
         if (checkWakeWord(text)) {
             onWakeWordDetected()
-            // Strip wake word for the actual query if desired, or keep intact
-            var query = text.replace(Regex("(?i)^(hey\\s+)?snow[,\\s]*"), "").trim()
+            val customWake = preferences.wakePhrase.trim()
+            var query = text.replace(Regex("(?i)^(hey\\s+)?snow[,\\s]*"), "")
+            if (customWake.isNotBlank()) {
+                query = query.replace(Regex("(?i)^" + Regex.escape(customWake) + "[,\\s]*"), "")
+            }
+            query = query.trim()
             if (query.isBlank()) {
                 query = text
             }
@@ -339,6 +401,7 @@ class VoiceEngine(
         mainHandler.removeCallbacksAndMessages(null)
         stopSpeaking()
         textToSpeech?.shutdown()
+        ttsProviderManager.stopAudio()
         speechRecognizer?.destroy()
         speechRecognizer = null
     }

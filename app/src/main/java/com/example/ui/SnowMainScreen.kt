@@ -27,10 +27,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -65,7 +67,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.SnowPreferences
 import com.example.ui.components.CameraSheet
 import com.example.ui.components.ConfigDialog
+import com.example.ui.components.ConfirmationDialog
+import com.example.ui.components.DiagnosticsSheet
 import com.example.ui.components.HistorySheet
+import com.example.ui.components.MemorySheet
 import com.example.ui.components.QuickCommandsBar
 import com.example.ui.orb.VoiceOrb
 import com.example.voice.VoiceState
@@ -81,15 +86,20 @@ fun SnowMainScreen(
     val partialTranscript by viewModel.partialTranscript.collectAsStateWithLifecycle()
     val lastResponse by viewModel.lastAiResponse.collectAsStateWithLifecycle()
     val allMessages by viewModel.allMessages.collectAsStateWithLifecycle()
+    val allMemories by viewModel.allMemories.collectAsStateWithLifecycle()
+    val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
+    val statusBannerText by viewModel.statusBannerText.collectAsStateWithLifecycle()
+    val pendingConfirmation by viewModel.pendingConfirmationResponse.collectAsStateWithLifecycle()
 
     val showConfigDialog by viewModel.showConfigDialog.collectAsStateWithLifecycle()
     val showCameraSheet by viewModel.showCameraSheet.collectAsStateWithLifecycle()
     val showHistorySheet by viewModel.showHistorySheet.collectAsStateWithLifecycle()
+    val showMemorySheet by viewModel.showMemorySheet.collectAsStateWithLifecycle()
+    val showDiagnosticsSheet by viewModel.showDiagnosticsSheet.collectAsStateWithLifecycle()
 
     var showTextInput by remember { mutableStateOf(false) }
     var manualTextQuery by remember { mutableStateOf("") }
 
-    // Permissions handling
     var hasAudioPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -123,7 +133,6 @@ fun SnowMainScreen(
         }
     }
 
-    // Wake word toast/feedback
     LaunchedEffect(Unit) {
         viewModel.wakeWordDetectedEvent.collect {
             Toast.makeText(context, "❄ \"Snow\" Wake Word Detected!", Toast.LENGTH_SHORT).show()
@@ -155,17 +164,20 @@ fun SnowMainScreen(
                     .navigationBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // --- 1. Top Bar ---
+                // 1. Top Bar with Action Icons
                 TopBar(
+                    assistantName = viewModel.preferences.assistantName,
                     language = viewModel.preferences.languageMode,
                     wakeWordActive = viewModel.preferences.wakeWordEnabled,
+                    onMemoryClick = { viewModel.openMemorySheet() },
+                    onDiagnosticsClick = { viewModel.openDiagnostics() },
                     onHistoryClick = { viewModel.openHistory() },
                     onSettingsClick = { viewModel.openConfigDialog() }
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // --- 2. Central Voice Orb ---
+                // 2. Central Voice Orb
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -180,18 +192,21 @@ fun SnowMainScreen(
                             voiceState = voiceState,
                             rmsAmplitude = rmsAmplitude,
                             onClick = { viewModel.openConfigDialog() },
-                            modifier = Modifier.padding(16.dp),
-                            size = 270.dp
+                            modifier = Modifier.padding(12.dp),
+                            size = 260.dp
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Status Badge / State Indicator
-                        StatusBadge(voiceState = voiceState)
+                        // Status Badge / Agent Progress Banner
+                        StatusBadge(
+                            voiceState = voiceState,
+                            statusBanner = statusBannerText
+                        )
                     }
                 }
 
-                // --- 3. Live Speech & AI Transcript Display ---
+                // 3. Live Speech & AI Transcript Display
                 TranscriptCard(
                     partialTranscript = partialTranscript,
                     lastAiResponse = lastResponse,
@@ -219,7 +234,7 @@ fun SnowMainScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("manual_text_input"),
-                            placeholder = { Text("Type query for Snow…", color = Color(0xFF64748B)) },
+                            placeholder = { Text("Ask Snow anything…", color = Color(0xFF64748B)) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = Color(0xFF00E5FF),
@@ -247,7 +262,7 @@ fun SnowMainScreen(
                     }
                 }
 
-                // --- 4. Quick Commands Bar ---
+                // 4. Quick Commands Bar
                 QuickCommandsBar(
                     onCommandSelected = { prompt ->
                         viewModel.handleUserPrompt(prompt)
@@ -257,7 +272,7 @@ fun SnowMainScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // --- 5. Bottom Action Controls Bar ---
+                // 5. Bottom Action Controls Bar
                 BottomControlsBar(
                     voiceState = voiceState,
                     showTextInput = showTextInput,
@@ -281,7 +296,7 @@ fun SnowMainScreen(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Dialogs
+            // Dialogs & Sheets
             if (showConfigDialog) {
                 ConfigDialog(
                     preferences = viewModel.preferences,
@@ -291,12 +306,16 @@ fun SnowMainScreen(
                         viewModel.voiceEngine.configureFemaleVoice(lang)
                         viewModel.voiceEngine.speak(
                             when (lang) {
-                                SnowPreferences.LANG_UR -> "السلام علیکم! میں سنو ہوں، آپ کی آواز کی معاون۔"
-                                SnowPreferences.LANG_PS -> "سلام! زه واوره يم، ستاسو د غږ همکاره."
-                                else -> "Hello! I am Snow, your intelligent voice assistant."
+                                SnowPreferences.LANG_UR -> "السلام علیکم! میں سنو ہوں، آپ کی ذاتی آواز کی معاون۔"
+                                SnowPreferences.LANG_HI -> "नमस्ते! मैं स्नो हूँ, आपकी पर्सनल वॉइस एजेंट।"
+                                SnowPreferences.LANG_ROMAN_UR -> "Assalam o Alaikum! Main Snow hoon, aap ki personal AI voice agent."
+                                SnowPreferences.LANG_PS -> "سلام! زه واوره يم، ستاسو د غږ ځیرکه همکاره."
+                                else -> "Hello! I am Snow, your personal AI voice agent."
                             },
                             when (lang) {
                                 SnowPreferences.LANG_UR -> "Urdu"
+                                SnowPreferences.LANG_HI -> "Hindi"
+                                SnowPreferences.LANG_ROMAN_UR -> "Roman Urdu"
                                 SnowPreferences.LANG_PS -> "Pashto"
                                 else -> "English"
                             }
@@ -321,21 +340,61 @@ fun SnowMainScreen(
                     onClearHistory = { viewModel.clearHistory() }
                 )
             }
+
+            if (showMemorySheet) {
+                MemorySheet(
+                    memories = allMemories,
+                    notes = allNotes,
+                    onDismiss = { viewModel.closeMemorySheet() },
+                    onSaveMemory = { viewModel.saveMemory(it) },
+                    onDeleteMemory = { viewModel.deleteMemory(it) },
+                    onClearAllMemories = { viewModel.clearAllMemories() },
+                    onSaveNote = { title, content -> viewModel.saveNote(title, content) },
+                    onDeleteNote = { viewModel.deleteNote(it) }
+                )
+            }
+
+            if (showDiagnosticsSheet) {
+                DiagnosticsSheet(
+                    preferences = viewModel.preferences,
+                    permissionManager = viewModel.permissionManager,
+                    onDismiss = { viewModel.closeDiagnostics() },
+                    onTestProvider = { providerId ->
+                        val result = viewModel.testProvider(providerId)
+                        result.isSuccess to (if (result.isSuccess) "✓ Latency: ${result.latencyMs}ms (${result.message})" else "✗ ${result.message}")
+                    },
+                    onTestVoice = {
+                        viewModel.voiceEngine.speak("Voice output operational.", "English")
+                    }
+                )
+            }
+
+            if (pendingConfirmation != null) {
+                ConfirmationDialog(
+                    promptMessage = pendingConfirmation!!.spokenText,
+                    actionDescription = pendingConfirmation!!.pendingActionDescription,
+                    onConfirm = { viewModel.confirmPendingAction(true) },
+                    onDismiss = { viewModel.confirmPendingAction(false) }
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun TopBar(
+    assistantName: String,
     language: String,
     wakeWordActive: Boolean,
+    onMemoryClick: () -> Unit,
+    onDiagnosticsClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -353,7 +412,7 @@ private fun TopBar(
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(
-                    text = "Snow AI",
+                    text = assistantName,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF00F0FF)
@@ -373,11 +432,13 @@ private fun TopBar(
                 modifier = Modifier
                     .background(Color(0xFF0F172A), RoundedCornerShape(12.dp))
                     .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 7.dp, vertical = 3.dp)
             ) {
                 val langLabel = when (language) {
                     SnowPreferences.LANG_UR -> "اردو"
+                    SnowPreferences.LANG_HI -> "हिन्दी"
                     SnowPreferences.LANG_PS -> "پښتو"
+                    SnowPreferences.LANG_ROMAN_UR -> "RomUr"
                     SnowPreferences.LANG_EN -> "EN"
                     else -> "Auto"
                 }
@@ -385,37 +446,55 @@ private fun TopBar(
                     text = langLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFF00E5FF),
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.sp
                 )
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+
+            IconButton(
+                onClick = onMemoryClick,
+                modifier = Modifier.size(36.dp).testTag("memory_button")
+            ) {
+                Icon(Icons.Default.Psychology, contentDescription = "Memory & Notes", tint = Color(0xFF00E5FF), modifier = Modifier.size(20.dp))
+            }
+
+            IconButton(
+                onClick = onDiagnosticsClick,
+                modifier = Modifier.size(36.dp).testTag("diagnostics_button")
+            ) {
+                Icon(Icons.Default.Build, contentDescription = "Diagnostics", tint = Color(0xFF38BDF8), modifier = Modifier.size(19.dp))
+            }
 
             IconButton(
                 onClick = onHistoryClick,
-                modifier = Modifier.testTag("history_button")
+                modifier = Modifier.size(36.dp).testTag("history_button")
             ) {
-                Icon(Icons.Default.History, contentDescription = "History", tint = Color.White)
+                Icon(Icons.Default.History, contentDescription = "History", tint = Color.White, modifier = Modifier.size(20.dp))
             }
 
             IconButton(
                 onClick = onSettingsClick,
-                modifier = Modifier.testTag("settings_button")
+                modifier = Modifier.size(36.dp).testTag("settings_button")
             ) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
     }
 }
 
 @Composable
-private fun StatusBadge(voiceState: VoiceState) {
-    val (statusText, statusColor) = when (voiceState) {
+private fun StatusBadge(
+    voiceState: VoiceState,
+    statusBanner: String
+) {
+    val (baseText, statusColor) = when (voiceState) {
         VoiceState.LISTENING -> "● Listening for voice…" to Color(0xFF00F0FF)
-        VoiceState.THINKING -> "✦ Snow is processing…" to Color(0xFFC084FC)
+        VoiceState.THINKING -> "✦ $statusBanner" to Color(0xFFC084FC)
         VoiceState.SPEAKING -> "► Snow is speaking…" to Color(0xFF38BDF8)
         VoiceState.ERROR -> "⚠ Microphone / Network error" to Color(0xFFF87171)
-        VoiceState.IDLE -> "Tap orb to configure or speak" to Color(0xFF94A3B8)
+        VoiceState.IDLE -> (if (statusBanner != "Ready" && statusBanner.isNotBlank()) statusBanner else "Tap orb or say wake phrase") to Color(0xFF94A3B8)
     }
 
     Box(
@@ -426,7 +505,7 @@ private fun StatusBadge(voiceState: VoiceState) {
             .testTag("voice_status_badge")
     ) {
         Text(
-            text = statusText,
+            text = baseText,
             style = MaterialTheme.typography.labelMedium,
             color = statusColor,
             fontWeight = FontWeight.Medium
@@ -449,7 +528,6 @@ private fun TranscriptCard(
         colors = CardDefaults.cardColors(containerColor = Color(0xFF09111E).copy(alpha = 0.85f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // If user is currently speaking or spoke
             if (partialTranscript.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -467,7 +545,6 @@ private fun TranscriptCard(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // AI Response Display
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     text = "Snow: ",
@@ -502,7 +579,6 @@ private fun BottomControlsBar(
         horizontalArrangement = Arrangement.SpaceAround,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Visual Recognition / Camera
         FloatingActionButton(
             onClick = onCameraClick,
             containerColor = Color(0xFF131D31),
@@ -514,7 +590,6 @@ private fun BottomControlsBar(
             Icon(Icons.Default.CameraAlt, contentDescription = "Camera Vision")
         }
 
-        // Main Microphone Control FAB
         FloatingActionButton(
             onClick = onMicClick,
             containerColor = if (voiceState == VoiceState.LISTENING) Color(0xFF00E5FF) else if (voiceState == VoiceState.SPEAKING) Color(0xFFEF4444) else Color(0xFF0284C7),
@@ -531,7 +606,6 @@ private fun BottomControlsBar(
             )
         }
 
-        // Keyboard / Text Query Toggle
         FloatingActionButton(
             onClick = onToggleTextInput,
             containerColor = if (showTextInput) Color(0xFF00E5FF).copy(alpha = 0.25f) else Color(0xFF131D31),

@@ -106,6 +106,47 @@ class SnowAccessibilityService : AccessibilityService() {
         return false
     }
 
+    fun getVisibleScreenText(): String {
+        val root = rootInActiveWindow ?: return "Screen content unavailable."
+        val sb = StringBuilder()
+        extractTextFromNode(root, sb)
+        val result = sb.toString().trim()
+        return if (result.isBlank()) "No readable text found on current screen." else result
+    }
+
+    private fun extractTextFromNode(node: AccessibilityNodeInfo, sb: StringBuilder) {
+        val text = node.text?.toString()?.trim()
+        val desc = node.contentDescription?.toString()?.trim()
+        if (!text.isNullOrBlank()) {
+            sb.append(text).append("\n")
+        } else if (!desc.isNullOrBlank()) {
+            sb.append(desc).append("\n")
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            extractTextFromNode(child, sb)
+        }
+    }
+
+    fun clickTextOnScreen(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        return clickNodeWithText(root, text)
+    }
+
+    fun scrollScreen(forward: Boolean): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        return root.performAction(action)
+    }
+
+    fun pressBack(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+
+    fun pressHome(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_HOME)
+    }
+
     override fun onInterrupt() {
         Log.w("SnowAccessibility", "Accessibility service interrupted")
     }
