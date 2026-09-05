@@ -12,6 +12,7 @@ import com.example.ai.provider.AIProviderManager
 import com.example.data.AppDatabase
 import com.example.data.SnowPreferences
 import com.example.device.DeviceCommander
+import com.example.image.ImageGenerationManager
 import com.example.permissions.PermissionManager
 import com.example.search.SearchManager
 import com.example.service.SnowVoiceService
@@ -22,6 +23,9 @@ class SnowApplication : Application() {
         private set
 
     lateinit var preferences: SnowPreferences
+        private set
+
+    lateinit var imageGenerationManager: ImageGenerationManager
         private set
 
     lateinit var geminiClient: GeminiClient
@@ -70,6 +74,7 @@ class SnowApplication : Application() {
         searchManager = SearchManager(preferences)
         memoryManager = MemoryManager(database.memoryDao())
         notesManager = NotesManager(database.noteDao())
+        imageGenerationManager = ImageGenerationManager(this, preferences)
         toolRegistry = ToolRegistry()
         toolExecutor = ToolExecutor(
             context = this,
@@ -78,7 +83,8 @@ class SnowApplication : Application() {
             memoryManager = memoryManager,
             notesManager = notesManager,
             reminderDao = database.reminderDao(),
-            permissionManager = permissionManager
+            permissionManager = permissionManager,
+            imageGenerationManager = imageGenerationManager
         )
         taskPlanner = TaskPlanner()
         aiProviderManager = AIProviderManager(preferences)

@@ -6,6 +6,7 @@ import com.example.ai.provider.AIProviderManager
 import com.example.data.SnowPreferences
 import com.example.data.model.ChatMessage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +40,17 @@ class AgentManager(
     private val _agentState = MutableStateFlow(AgentExecutionState())
     val agentState: StateFlow<AgentExecutionState> = _agentState.asStateFlow()
 
+    @Volatile
+    private var isCancelled = false
+
+    fun cancelCurrentTask() {
+        isCancelled = true
+        _agentState.value = _agentState.value.copy(
+            isExecuting = false,
+            statusText = "Interrupted"
+        )
+    }
+
     companion object {
         private const val MAX_AGENT_LOOPS = 5
     }
@@ -49,26 +61,26 @@ class AgentManager(
         imageBitmap: Bitmap? = null,
         onStatusCallback: (String) -> Unit = {}
     ): FinalAgentResponse = withContext(Dispatchers.IO) {
+        isCancelled = false
         val cleanPrompt = userPrompt.trim()
         if (cleanPrompt.isBlank()) {
             return@withContext FinalAgentResponse("How can I help you?", "English")
         }
 
-        _agentState.value = AgentExecutionState(statusText = "Planning…", isExecuting = true)
-        onStatusCallback("Planning…")
+        _agentState.value = AgentExecutionState(statusText = "Analyzing…", isExecuting = true)
+        onStatusCallback("Analyzing…")
 
         // 1. Task Planning
         val plan = taskPlanner.planTask(cleanPrompt)
-        if (plan.isMultiStep) {
-            _agentState.value = _agentState.value.copy(
-                totalSteps = plan.steps.size,
-                statusText = "Executing multi-step task (0/${plan.steps.size})…"
-            )
-        }
+        val totalSteps = if (plan.isMultiStep) plan.steps.size else 1
+        _agentState.value = _agentState.value.copy(
+            totalSteps = totalSteps,
+            statusText = if (plan.isMultiStep) "Executing multi-step action (0/$totalSteps)…" else "Reasoning…"
+        )
 
         // 2. Build Agent System Prompt with Memory Context & Personality
         val memoryContext = memoryManager.getFormattedMemoriesForContext()
-        val systemInstruction = buildSystemPrompt(memoryContext)
+        val systemInstruction = buildSystemPrompt(memoryContext, plan)
 
         val tools = toolRegistry.getAllTools()
         val executedToolsList = mutableListOf<String>()
@@ -79,12 +91,16 @@ class AgentManager(
         var finalSpokenText = ""
         var detectedLang = "English"
 
-        // 3. Autonomous Agent Loop (Up to MAX_AGENT_LOOPS steps)
+        // 3. Autonomous Agent Loop (Observe -> Plan -> Act -> Verify)
         while (loopCount < MAX_AGENT_LOOPS) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (isCancelled) {
+                return@withContext FinalAgentResponse("Action cancelled.", detectedLang)
+            }
             loopCount++
             _agentState.value = _agentState.value.copy(
                 currentStep = loopCount,
-                statusText = if (plan.isMultiStep) "Executing step $loopCount of ${plan.steps.size}…" else "Thinking…"
+                statusText = if (plan.isMultiStep) "Executing step $loopCount of $totalSteps…" else "Processing…"
             )
             onStatusCallback(_agentState.value.statusText)
 
@@ -100,19 +116,49 @@ class AgentManager(
 
             detectedLang = turnResult.detectedLanguage
 
-            if (turnResult.toolCalls.isEmpty()) {
+            // Handle provider error: do not repeatedly loop on network/API failure
+            if (turnResult.error != null) {
+                if (loopCount == 1 && plan.steps.isNotEmpty() && plan.steps[0].suggestedTool != null) {
+                    val step = plan.steps[0]
+                    val suggested = step.suggestedTool
+                    if (suggested != null) {
+                        _agentState.value = _agentState.value.copy(statusText = "Executing: $suggested…")
+                        onStatusCallback(_agentState.value.statusText)
+                        val result = toolExecutor.executeTool(suggested, step.suggestedArgs)
+                        executedToolsList.add(suggested)
+                        finalSpokenText = result.userVisibleMessage ?: result.output
+                    }
+                } else {
+                    finalSpokenText = turnResult.spokenText
+                }
+                break
+            }
+
+            // Check if model emitted tool calls
+            val toolCallsToExecute = turnResult.toolCalls.toMutableList()
+
+            // Fail-safe: If model emitted no tool calls on loop 1, but task planner identified an unambiguous suggested tool
+            if (toolCallsToExecute.isEmpty() && loopCount == 1 && plan.steps.isNotEmpty() && plan.steps[0].suggestedTool != null) {
+                val step = plan.steps[0]
+                val suggested = step.suggestedTool
+                if (suggested != null) {
+                    toolCallsToExecute.add(com.example.ai.provider.ToolCallRequest(suggested, step.suggestedArgs))
+                }
+            }
+
+            if (toolCallsToExecute.isEmpty()) {
                 // Agent has formulated final response
                 finalSpokenText = turnResult.spokenText
                 break
             }
 
             // Execute requested tools
-            for (call in turnResult.toolCalls) {
+            for (call in toolCallsToExecute) {
                 val tool = toolRegistry.getTool(call.toolName)
                 if (tool != null && tool.isSensitive && preferences.requireConfirmationForSensitive) {
                     _agentState.value = _agentState.value.copy(isExecuting = false, statusText = "Awaiting confirmation")
                     return@withContext FinalAgentResponse(
-                        spokenText = "This action requires your confirmation: ${tool.description}. Would you like me to proceed?",
+                        spokenText = "This action requires confirmation: ${tool.description}. Proceed?",
                         detectedLanguage = detectedLang,
                         requiresUserConfirmation = true,
                         pendingActionDescription = "${tool.name} with ${call.arguments}"
@@ -120,36 +166,39 @@ class AgentManager(
                 }
 
                 _agentState.value = _agentState.value.copy(
-                    statusText = "Running tool: ${call.toolName}…"
+                    statusText = "Action: ${call.toolName}…"
                 )
                 onStatusCallback(_agentState.value.statusText)
 
                 val result = toolExecutor.executeTool(call.toolName, call.arguments)
                 executedToolsList.add(call.toolName)
 
-                toolOutputsAccumulator.append("TOOL [${call.toolName}] RESULT:\n")
-                toolOutputsAccumulator.append(result.output).append("\n\n")
+                toolOutputsAccumulator.append("OBSERVED RESULT [${call.toolName}]:\n")
+                toolOutputsAccumulator.append("Success: ").append(result.isSuccess).append("\n")
+                toolOutputsAccumulator.append("Output: ").append(result.output).append("\n\n")
 
-                if (turnResult.spokenText.isNotBlank()) {
+                if (result.userVisibleMessage != null) {
+                    finalSpokenText = result.userVisibleMessage
+                } else if (turnResult.spokenText.isNotBlank()) {
                     finalSpokenText = turnResult.spokenText
                 }
             }
 
             // Provide tool output context for next step
-            currentPrompt = "Proceed based on the observed tool outputs and provide the final warm voice response."
+            currentPrompt = "Proceed based on the observed action results and provide the final warm voice response."
         }
 
         _agentState.value = AgentExecutionState(
             statusText = "Completed.",
             isExecuting = false,
             currentStep = loopCount,
-            totalSteps = plan.steps.size,
+            totalSteps = totalSteps,
             executedTools = executedToolsList
         )
         onStatusCallback("Completed.")
 
         val summary = if (executedToolsList.isNotEmpty()) {
-            "Executed: " + executedToolsList.joinToString(", ")
+            "Actions: " + executedToolsList.joinToString(", ")
         } else null
 
         FinalAgentResponse(
@@ -159,22 +208,28 @@ class AgentManager(
         )
     }
 
-    private fun buildSystemPrompt(memoryContext: String): String = buildString {
-        append("You are ${preferences.assistantName}, an intelligent, highly capable, and empathetic personal AI voice agent. ")
-        append("You possess a warm, natural, human-like female voice persona. ")
-        append("You are equipped with tools to control the user's Android phone, search the web, manage notes, recall memory, check notifications, inspect the screen, and schedule reminders. ")
-        append("\nCRITICAL AGENT DIRECTIVES:\n")
-        append("1. Multi-Step Execution: When a user asks a complex multi-part request, use tools sequentially. Inspect the tool outputs and proceed until the entire task is resolved.\n")
-        append("2. Language Matching & Mixed Speech: Snow natively understands English, Hindi (हिन्दी), Urdu (اردو), Roman Urdu (English alphabet), and Pashto (پښتو). ")
-        append("Always answer naturally in the user's spoken language without unnecessary translation. If they speak Roman Urdu, reply in Roman Urdu. If Hindi, in Hindi. If Pashto, in Pashto.\n")
-        append("3. Spoken Voice Formatting: Keep answers conversational, natural, and concise (1 to 3 spoken sentences). Avoid markdown stars, lists, or tables as your response is read aloud by TTS.\n")
-        append("4. Real World Integrity: Never claim live or internet facts without calling 'web_search'. Never pretend to execute a tool without calling it.\n")
+    private fun buildSystemPrompt(memoryContext: String, plan: TaskPlan): String = buildString {
+        append("You are ${preferences.assistantName}, an intelligent and empathetic Android personal AI agent. ")
+        append("You possess a warm, natural human female voice persona. ")
+        append("You are equipped with tools to execute real actions on this Android device: WhatsApp messaging, launching apps, file creation, screen reading, touch gestures, web search, notes, memory, and alarms.\n")
+        append("CRITICAL AGENT DIRECTIVES:\n")
+        append("1. Multi-Step Execution: When a user asks an actionable command, emit tool calls. Inspect observed outputs and continue until completed.\n")
+        append("2. Language Matching: Snow natively speaks and understands English, Urdu (اردو), Roman Urdu (English alphabet), Hindi (हिन्दी), and Pashto (پښتو). Match the user's natural language and script.\n")
+        append("3. Spoken Voice Conciseness: Keep final answers conversational, warm, and brief (1 to 3 spoken sentences) as your response is read aloud by TTS.\n")
+        append("4. Real World Integrity: Never fake actions. Rely only on observed tool results.\n")
+
+        if (plan.isMultiStep) {
+            append("\nCURRENT TASK PLAN:\n")
+            plan.steps.forEach { append(" - Step ${it.stepNumber}: ${it.description}\n") }
+        }
+
         when (preferences.personality) {
             "PROFESSIONAL" -> append("Tone: Professional, direct, efficient, polite.\n")
             "CONCISE" -> append("Tone: Extremely brief, direct, zero filler.\n")
             "HUMOROUS" -> append("Tone: Witty, playful, charming, warm.\n")
             else -> append("Tone: Warm, empathetic, welcoming, friendly.\n")
         }
+
         if (memoryContext.isNotBlank()) {
             append("\n$memoryContext\n")
         }

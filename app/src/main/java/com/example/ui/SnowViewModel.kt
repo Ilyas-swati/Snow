@@ -8,11 +8,13 @@ import com.example.SnowApplication
 import com.example.agent.AgentExecutionState
 import com.example.agent.FinalAgentResponse
 import com.example.ai.provider.ConnectionTestResult
+import com.example.data.SnowPreferences
 import com.example.data.model.ChatMessage
 import com.example.data.model.MemoryEntity
 import com.example.data.model.NoteEntity
 import com.example.voice.VoiceEngine
 import com.example.voice.VoiceState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -22,6 +24,16 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+enum class ConversationState {
+    IDLE,
+    LISTENING,
+    THINKING,
+    ACTING,
+    SPEAKING,
+    INTERRUPTED,
+    ERROR
+}
 
 class SnowViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -33,6 +45,12 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
     val notesManager = app.notesManager
     val aiProviderManager = app.aiProviderManager
     val agentManager = app.agentManager
+    val imageGenerationManager = app.imageGenerationManager
+
+    private var activeConversationJob: Job? = null
+
+    private val _conversationState = MutableStateFlow(ConversationState.IDLE)
+    val conversationState: StateFlow<ConversationState> = _conversationState.asStateFlow()
 
     val allMessages: StateFlow<List<ChatMessage>> = database.chatDao().getAllMessages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -59,6 +77,27 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     )
+
+    init {
+        // Wire image generation callback to display newly generated images inside chat
+        app.toolExecutor.onImageGeneratedListener = { filePath, prompt ->
+            viewModelScope.launch {
+                val imgMsg = ChatMessage(
+                    sender = "snow",
+                    content = "Ye rahi aapki generated image: \"$prompt\"",
+                    language = preferences.languageMode,
+                    imageUri = filePath,
+                    actionSummary = "Generated Image"
+                )
+                database.chatDao().insert(imgMsg)
+            }
+        }
+
+        // Real-time interruption from VoiceEngine
+        voiceEngine.onInterruptionRequested = { reason ->
+            interruptCurrentTask(reason)
+        }
+    }
 
     val voiceState: StateFlow<VoiceState> = voiceEngine.voiceState
     val rmsAmplitude: StateFlow<Float> = voiceEngine.rmsAmplitude
@@ -133,64 +172,196 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleListening() {
+        if (voiceState.value == VoiceState.SPEAKING || _conversationState.value == ConversationState.SPEAKING) {
+            interruptCurrentTask("User tapped while speaking")
+            return
+        }
+
         if (voiceState.value == VoiceState.LISTENING) {
             voiceEngine.stopListening()
+            _conversationState.value = ConversationState.IDLE
             _statusBannerText.value = "Paused"
-        } else if (voiceState.value == VoiceState.SPEAKING) {
-            voiceEngine.stopSpeaking()
-            voiceEngine.startListening()
-            _statusBannerText.value = "Listening…"
         } else {
             voiceEngine.startListening()
+            _conversationState.value = ConversationState.LISTENING
             _statusBannerText.value = "Listening…"
         }
     }
 
-    fun handleUserPrompt(userText: String, capturedImage: Bitmap? = null) {
-        if (userText.isBlank() && capturedImage == null) return
+    fun interruptCurrentTask(reason: String = "Stop / Interrupt requested") {
+        activeConversationJob?.cancel()
+        activeConversationJob = null
+        agentManager.cancelCurrentTask()
+        voiceEngine.stopSpeaking()
+        _isProcessingPrompt.value = false
+        _conversationState.value = ConversationState.INTERRUPTED
+        _statusBannerText.value = "Interrupted"
 
         viewModelScope.launch {
-            val userMsg = ChatMessage(
-                sender = "user",
-                content = userText.ifBlank { "Describe this image" },
-                language = preferences.languageMode
-            )
-            database.chatDao().insert(userMsg)
+            kotlinx.coroutines.delay(250)
+            _conversationState.value = ConversationState.LISTENING
+            _statusBannerText.value = "Listening…"
+            voiceEngine.startListening()
+        }
+    }
 
-            _statusBannerText.value = "Planning…"
-            voiceEngine.setThinking()
+    private val _isProcessingPrompt = MutableStateFlow(false)
+    val isProcessingPrompt: StateFlow<Boolean> = _isProcessingPrompt.asStateFlow()
 
-            val finalResponse = agentManager.processUserTurn(
-                userPrompt = userText.ifBlank { "Analyze and describe what you see in this image in detail." },
-                conversationHistory = allMessages.value,
-                imageBitmap = capturedImage,
-                onStatusCallback = { status ->
-                    _statusBannerText.value = status
-                }
-            )
+    fun handleUserPrompt(userText: String, capturedImage: Bitmap? = null, isTyped: Boolean = false) {
+        val cleanText = userText.trim()
+        if (cleanText.isBlank() && capturedImage == null) return
 
-            if (finalResponse.requiresUserConfirmation) {
-                _pendingConfirmationResponse.value = finalResponse
-                _statusBannerText.value = "Confirmation required"
-                _lastAiResponse.value = finalResponse.spokenText
-                voiceEngine.speak(finalResponse.spokenText, finalResponse.detectedLanguage)
-                return@launch
+        // 1. High-Priority Global Cancel Intent (Req 35)
+        if (VoiceEngine.isInterruptionWord(cleanText)) {
+            activeConversationJob?.cancel()
+            activeConversationJob = null
+            agentManager.cancelCurrentTask()
+            voiceEngine.stopSpeaking()
+            _isProcessingPrompt.value = false
+            _conversationState.value = ConversationState.INTERRUPTED
+
+            val ackText = when (preferences.languageMode) {
+                SnowPreferences.LANG_UR -> "ٹھیک ہے جانو، رک گئی۔ ❤️"
+                SnowPreferences.LANG_HI -> "ठीक है जानू, रुक गई। ❤️"
+                SnowPreferences.LANG_ROMAN_UR -> "Okay jaanu, ruk gayi. ❤️"
+                else -> "Okay jaanu, ruk gayi. ❤️"
             }
 
-            _lastAiResponse.value = finalResponse.spokenText
-            _statusBannerText.value = "Speaking…"
+            _lastAiResponse.value = ackText
+            _statusBannerText.value = "Stopped"
 
-            // Save agent message to database
-            val agentMsg = ChatMessage(
-                sender = "snow",
-                content = finalResponse.spokenText,
-                language = finalResponse.detectedLanguage,
-                actionSummary = finalResponse.executedToolsSummary
-            )
-            database.chatDao().insert(agentMsg)
+            viewModelScope.launch {
+                val userMsg = ChatMessage(
+                    sender = "user",
+                    content = cleanText,
+                    language = preferences.languageMode
+                )
+                val replyMsg = ChatMessage(
+                    sender = "snow",
+                    content = ackText,
+                    language = preferences.languageMode
+                )
+                database.chatDao().insert(userMsg)
+                database.chatDao().insert(replyMsg)
 
-            // Speak natural response aloud
-            voiceEngine.speak(finalResponse.spokenText, finalResponse.detectedLanguage)
+                if (preferences.autoSpeakEnabled) {
+                    _conversationState.value = ConversationState.SPEAKING
+                    voiceEngine.speak(ackText, preferences.languageMode)
+                }
+                kotlinx.coroutines.delay(600)
+                _conversationState.value = ConversationState.LISTENING
+                _statusBannerText.value = "Listening…"
+                voiceEngine.startListening()
+            }
+            return
+        }
+
+        // 2. Cancel any previously running task (Req 33: Single foreground task)
+        activeConversationJob?.cancel()
+        agentManager.cancelCurrentTask()
+        voiceEngine.stopSpeaking()
+
+        activeConversationJob = viewModelScope.launch {
+            _isProcessingPrompt.value = true
+            _conversationState.value = ConversationState.THINKING
+            try {
+                val userMsg = ChatMessage(
+                    sender = "user",
+                    content = cleanText.ifBlank { "Describe this image" },
+                    language = preferences.languageMode
+                )
+                database.chatDao().insert(userMsg)
+
+                _statusBannerText.value = "Planning…"
+                voiceEngine.setThinking()
+
+                val finalResponse = agentManager.processUserTurn(
+                    userPrompt = cleanText.ifBlank { "Analyze and describe what you see in this image in detail." },
+                    conversationHistory = allMessages.value,
+                    imageBitmap = capturedImage,
+                    onStatusCallback = { status ->
+                        _statusBannerText.value = status
+                        if (status.contains("Action:") || status.contains("Executing")) {
+                            _conversationState.value = ConversationState.ACTING
+                        }
+                    }
+                )
+
+                if (finalResponse.requiresUserConfirmation) {
+                    _pendingConfirmationResponse.value = finalResponse
+                    _statusBannerText.value = "Confirmation required"
+                    _lastAiResponse.value = finalResponse.spokenText
+                    _conversationState.value = ConversationState.SPEAKING
+                    voiceEngine.speak(finalResponse.spokenText, finalResponse.detectedLanguage)
+                    return@launch
+                }
+
+                _lastAiResponse.value = finalResponse.spokenText
+
+                // Save agent message to database
+                val agentMsg = ChatMessage(
+                    sender = "snow",
+                    content = finalResponse.spokenText,
+                    language = finalResponse.detectedLanguage,
+                    actionSummary = finalResponse.executedToolsSummary
+                )
+                database.chatDao().insert(agentMsg)
+
+                // Determine if TTS should speak response
+                val shouldSpeak = if (isTyped) {
+                    when (preferences.speakTypedResponses) {
+                        SnowPreferences.SPEAK_TYPED_ALWAYS -> preferences.autoSpeakEnabled
+                        SnowPreferences.SPEAK_TYPED_VOICE_ONLY -> false
+                        SnowPreferences.SPEAK_TYPED_NEVER -> false
+                        else -> preferences.autoSpeakEnabled
+                    }
+                } else {
+                    preferences.autoSpeakEnabled
+                }
+
+                if (shouldSpeak) {
+                    _conversationState.value = ConversationState.SPEAKING
+                    _statusBannerText.value = "Speaking…"
+                    voiceEngine.speak(finalResponse.spokenText, finalResponse.detectedLanguage)
+                } else {
+                    _conversationState.value = ConversationState.IDLE
+                    _statusBannerText.value = "Ready"
+                    voiceEngine.setIdle()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _statusBannerText.value = "Cancelled"
+                _conversationState.value = ConversationState.INTERRUPTED
+            } catch (e: Exception) {
+                _statusBannerText.value = "Error: ${e.localizedMessage ?: "Unexpected error"}"
+                _conversationState.value = ConversationState.ERROR
+                voiceEngine.setIdle()
+            } finally {
+                _isProcessingPrompt.value = false
+                if (_conversationState.value == ConversationState.THINKING || _conversationState.value == ConversationState.ACTING) {
+                    _conversationState.value = ConversationState.IDLE
+                }
+            }
+        }
+    }
+
+    fun saveImageToGallery(filePath: String): Boolean {
+        val saved = imageGenerationManager.saveImageToGallery(filePath)
+        if (saved) {
+            _statusBannerText.value = "Image saved to gallery"
+        } else {
+            _statusBannerText.value = "Failed to save image"
+        }
+        return saved
+    }
+
+    fun shareImage(filePath: String, recipientApp: String? = null) {
+        imageGenerationManager.shareImage(filePath, "Shared from Snow AI", recipientApp)
+    }
+
+    fun deleteMessage(id: Long) {
+        viewModelScope.launch {
+            database.chatDao().deleteMessage(id)
         }
     }
 
@@ -250,6 +421,7 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        activeConversationJob?.cancel()
         voiceEngine.release()
     }
 }

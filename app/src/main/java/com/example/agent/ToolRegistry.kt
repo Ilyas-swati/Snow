@@ -9,150 +9,238 @@ class ToolRegistry {
     }
 
     private fun registerDefaultTools() {
+        // 1. OPEN_APP
         register(
             AgentTool(
                 name = "open_app",
-                description = "Opens an installed Android application by name (e.g. 'youtube', 'whatsapp', 'chrome', 'camera', 'settings', 'maps', 'spotify').",
+                description = "Opens an installed Android application by name (e.g. 'whatsapp', 'youtube', 'chrome', 'camera', 'settings', 'calculator').",
                 parameters = listOf(
-                    ToolParameter("app_name", "string", "Name of the application or package to launch")
+                    ToolParameter("app_name", "string", "Name of the app to launch (e.g. 'whatsapp', 'youtube')")
                 )
             )
         )
 
-        register(
-            AgentTool(
-                name = "web_search",
-                description = "Searches the live internet for fresh information, news, tutorials, recipes, or current facts.",
-                parameters = listOf(
-                    ToolParameter("query", "string", "Search keywords or question")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "search_contacts",
-                description = "Searches user contacts on device to find phone number and contact details by name.",
-                parameters = listOf(
-                    ToolParameter("name", "string", "Name of the contact to find, e.g. 'Ali'")
-                )
-            )
-        )
-
+        // 2. SEND_WHATSAPP / SEND_MESSAGE
         register(
             AgentTool(
                 name = "send_whatsapp",
-                description = "Prepares and opens WhatsApp to send a chat message to a contact or phone number.",
+                description = "Automates sending a WhatsApp message to a recipient contact name or number. Resolves contact, opens conversation, types message, clicks send, and verifies transmission.",
                 parameters = listOf(
-                    ToolParameter("recipient", "string", "Name or phone number of the person"),
-                    ToolParameter("message", "string", "Message content to type and send")
+                    ToolParameter("recipient", "string", "Contact name or phone number (e.g. 'Ali', 'Sara', '03001234567')"),
+                    ToolParameter("message", "string", "The message text to send")
+                )
+            )
+        )
+
+        // 3. READ_SCREEN / SCREEN UNDERSTANDING
+        register(
+            AgentTool(
+                name = "read_screen",
+                description = "Inspects the active screen UI hierarchy using Accessibility Service, extracting all visible text, interactive buttons, and input fields.",
+                parameters = emptyList()
+            )
+        )
+
+        // 4. TAKE_SCREENSHOT
+        register(
+            AgentTool(
+                name = "take_screenshot",
+                description = "Captures a live screenshot of the current Android screen using Accessibility screenshot API.",
+                parameters = emptyList()
+            )
+        )
+
+        // 5. CLICK / TAP
+        register(
+            AgentTool(
+                name = "click_element",
+                description = "Clicks a button, tab, contact, or UI element matching text, contentDescription, or view ID on the current screen.",
+                parameters = listOf(
+                    ToolParameter("target", "string", "Visible text, description, or view ID of the element to click")
+                )
+            )
+        )
+
+        // 6. LONG_CLICK
+        register(
+            AgentTool(
+                name = "long_click_element",
+                description = "Performs a long-press touch on an element matching text or description on screen.",
+                parameters = listOf(
+                    ToolParameter("target", "string", "Visible text or description of the element to long click")
+                )
+            )
+        )
+
+        // 7. TYPE_TEXT
+        register(
+            AgentTool(
+                name = "type_text",
+                description = "Types text into the currently active or detected editable text field on screen using accessibility input.",
+                parameters = listOf(
+                    ToolParameter("text", "string", "The text to type into the field"),
+                    ToolParameter("clear_first", "string", "'true' to clear existing text before typing, else 'false'", isRequired = false)
+                )
+            )
+        )
+
+        // 8. CLEAR_TEXT
+        register(
+            AgentTool(
+                name = "clear_text",
+                description = "Clears text from the active text field on screen.",
+                parameters = emptyList()
+            )
+        )
+
+        // 9. SCROLL
+        register(
+            AgentTool(
+                name = "scroll_screen",
+                description = "Scrolls the current screen up or down.",
+                parameters = listOf(
+                    ToolParameter("direction", "string", "'DOWN' to scroll down (forward) or 'UP' to scroll up (backward)")
+                )
+            )
+        )
+
+        // 10. BACK & HOME
+        register(
+            AgentTool(
+                name = "press_back",
+                description = "Triggers the system Back button action.",
+                parameters = emptyList()
+            )
+        )
+
+        register(
+            AgentTool(
+                name = "press_home",
+                description = "Triggers the system Home button action to go to home screen.",
+                parameters = emptyList()
+            )
+        )
+
+        // 11. CONTACT SELECTION / RESOLUTION
+        register(
+            AgentTool(
+                name = "select_contact",
+                description = "Searches phone contacts by name. Disambiguates if multiple matches are found.",
+                parameters = listOf(
+                    ToolParameter("name", "string", "Contact name to look up, e.g. 'Ali'")
+                )
+            )
+        )
+
+        // 12. CREATE_FOLDER
+        register(
+            AgentTool(
+                name = "create_folder",
+                description = "Creates a folder in Downloads, Documents, or app storage and verifies its existence.",
+                parameters = listOf(
+                    ToolParameter("folder_name", "string", "Name of the folder to create (e.g. 'Snow')"),
+                    ToolParameter("location", "string", "Parent location: 'Downloads' or 'Documents'", isRequired = false)
+                )
+            )
+        )
+
+        // 13. CREATE_FILE
+        register(
+            AgentTool(
+                name = "create_file",
+                description = "Creates a text file inside a folder with specified content and verifies creation.",
+                parameters = listOf(
+                    ToolParameter("folder_name", "string", "Target folder name (e.g. 'Snow')"),
+                    ToolParameter("file_name", "string", "Name of file (e.g. 'test.txt')"),
+                    ToolParameter("content", "string", "Content to write into the file", isRequired = false)
+                )
+            )
+        )
+
+        // 14. OPEN_FILE / OPEN_FOLDER
+        register(
+            AgentTool(
+                name = "open_folder",
+                description = "Opens the specified folder in the system file manager.",
+                parameters = listOf(
+                    ToolParameter("folder_name", "string", "Folder name to open")
+                )
+            )
+        )
+
+        // 15. SHARE_FILE
+        register(
+            AgentTool(
+                name = "share_file",
+                description = "Shares a file with other apps using the Android share sheet.",
+                parameters = listOf(
+                    ToolParameter("file_name", "string", "File name to share")
+                )
+            )
+        )
+
+        // 16. WAIT / SLEEP
+        register(
+            AgentTool(
+                name = "wait_action",
+                description = "Pauses execution for a specified duration in milliseconds to allow UI to render.",
+                parameters = listOf(
+                    ToolParameter("duration_ms", "string", "Milliseconds to wait (e.g. '1000')")
+                )
+            )
+        )
+
+        // 17. VERIFY_ACTION
+        register(
+            AgentTool(
+                name = "verify_action",
+                description = "Verifies that an expected UI text, element, or app package is now present on the screen.",
+                parameters = listOf(
+                    ToolParameter("expected_text_or_pkg", "string", "Text or package expected on screen")
+                )
+            )
+        )
+
+        // 18. WEB SEARCH
+        register(
+            AgentTool(
+                name = "web_search",
+                description = "Searches the live internet for fresh facts, news, recipes, tutorials, or current info.",
+                parameters = listOf(
+                    ToolParameter("query", "string", "Search terms or question")
+                )
+            )
+        )
+
+        // 19. PHONE CALL & SMS
+        register(
+            AgentTool(
+                name = "phone_call",
+                description = "Opens dialer ready to call a contact or phone number.",
+                parameters = listOf(
+                    ToolParameter("number", "string", "Phone number or contact name")
                 ),
-                isSensitive = false
+                isSensitive = true
             )
         )
 
         register(
             AgentTool(
                 name = "send_sms",
-                description = "Prepares SMS message composer for a contact or number.",
+                description = "Prepares SMS composer with recipient and message body.",
                 parameters = listOf(
                     ToolParameter("recipient", "string", "Recipient phone number or name"),
-                    ToolParameter("message", "string", "Text message body")
+                    ToolParameter("message", "string", "Message body")
                 ),
                 isSensitive = true
             )
         )
 
-        register(
-            AgentTool(
-                name = "phone_call",
-                description = "Opens the phone dialer with a contact's number ready to call.",
-                parameters = listOf(
-                    ToolParameter("number", "string", "Phone number or contact name to dial")
-                ),
-                isSensitive = true
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "set_alarm_or_timer",
-                description = "Sets an Android alarm or countdown timer. Example: hour 7, minute 0 or 20 minutes timer.",
-                parameters = listOf(
-                    ToolParameter("title", "string", "Label or title for alarm/timer"),
-                    ToolParameter("minutes_or_time", "string", "E.g. '20' for minutes, or '08:00' for alarm time"),
-                    ToolParameter("type", "string", "'TIMER' or 'ALARM'")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "create_reminder",
-                description = "Creates a persistent reminder with natural language time (e.g. 'tomorrow at 8 AM').",
-                parameters = listOf(
-                    ToolParameter("title", "string", "What to remind user about, e.g. 'Call Ali'"),
-                    ToolParameter("time_description", "string", "When to remind, e.g. 'tomorrow 8:00 AM' or 'in 30 minutes'")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "save_note",
-                description = "Saves a smart note into local database.",
-                parameters = listOf(
-                    ToolParameter("title", "string", "Title of the note"),
-                    ToolParameter("content", "string", "Body content of the note")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "search_notes",
-                description = "Searches user's saved notes by keyword.",
-                parameters = listOf(
-                    ToolParameter("query", "string", "Search keywords")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "save_memory",
-                description = "Remembers a permanent personal detail or preference about the user (e.g. 'Ali is my brother', 'User prefers dark theme').",
-                parameters = listOf(
-                    ToolParameter("fact", "string", "Fact or preference to remember")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "recall_memory",
-                description = "Retrieves stored memories or answers questions about the user.",
-                parameters = listOf(
-                    ToolParameter("query", "string", "Keywords or topic to recall")
-                )
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "forget_memory",
-                description = "Deletes stored memories matching a query.",
-                parameters = listOf(
-                    ToolParameter("query", "string", "What to delete from memory")
-                ),
-                isSensitive = true
-            )
-        )
-
+        // 20. DEVICE HARDWARE CONTROL
         register(
             AgentTool(
                 name = "device_control",
-                description = "Controls phone hardware like flashlight, volume, Wi-Fi settings, or Bluetooth settings.",
+                description = "Controls phone hardware: flashlight, volume, Wi-Fi settings, Bluetooth settings.",
                 parameters = listOf(
                     ToolParameter("feature", "string", "'flashlight', 'volume_up', 'volume_down', 'wifi', 'bluetooth'"),
                     ToolParameter("state", "string", "'ON', 'OFF', or 'TOGGLE'")
@@ -160,51 +248,101 @@ class ToolRegistry {
             )
         )
 
+        // 21. DEVICE STATUS
         register(
             AgentTool(
                 name = "get_device_status",
-                description = "Checks device battery level, date, current time, and network status.",
+                description = "Returns device battery level, date, current time, and network connection.",
                 parameters = emptyList()
             )
         )
 
+        // 22. ALARM & REMINDER
         register(
             AgentTool(
-                name = "read_notifications",
-                description = "Reads recent notifications from messaging apps (e.g. WhatsApp, SMS) via notification listener.",
-                parameters = emptyList()
-            )
-        )
-
-        register(
-            AgentTool(
-                name = "screen_action",
-                description = "Reads text on current screen or clicks UI buttons using Accessibility Service.",
+                name = "set_alarm_or_timer",
+                description = "Sets an alarm or countdown timer.",
                 parameters = listOf(
-                    ToolParameter("action", "string", "'READ_SCREEN', 'CLICK_TEXT', 'SCROLL_DOWN', 'BACK'"),
-                    ToolParameter("target_text", "string", "Text to click or search for on screen, if applicable")
+                    ToolParameter("title", "string", "Title or reason"),
+                    ToolParameter("minutes_or_time", "string", "Minutes count (e.g. '15') or time (e.g. '08:30')"),
+                    ToolParameter("type", "string", "'TIMER' or 'ALARM'")
+                )
+            )
+        )
+
+        // 23. NOTES & MEMORY
+        register(
+            AgentTool(
+                name = "save_note",
+                description = "Saves a smart note into local database.",
+                parameters = listOf(
+                    ToolParameter("title", "string", "Title of note"),
+                    ToolParameter("content", "string", "Content of note")
                 )
             )
         )
 
         register(
             AgentTool(
-                name = "file_operation",
-                description = "Creates, reads, or lists text files in user documents/app storage.",
+                name = "search_notes",
+                description = "Searches saved notes by keywords.",
                 parameters = listOf(
-                    ToolParameter("action", "string", "'CREATE', 'READ', 'LIST'"),
-                    ToolParameter("filename", "string", "File name, e.g. 'todo.txt'"),
-                    ToolParameter("content", "string", "File content when creating", isRequired = false)
-                ),
-                isSensitive = false
+                    ToolParameter("query", "string", "Search query")
+                )
             )
         )
 
         register(
             AgentTool(
-                name = "daily_briefing",
-                description = "Synthesizes a complete daily briefing including current date, time, battery, reminders, and notes.",
-                parameters = emptyList()
+                name = "save_memory",
+                description = "Remembers a permanent personal detail or user preference.",
+                parameters = listOf(
+                    ToolParameter("fact", "string", "Fact to remember")
+                )
+            )
+        )
+
+        register(
+            AgentTool(
+                name = "recall_memory",
+                description = "Retrieves stored facts about user.",
+                parameters = listOf(
+                    ToolParameter("query", "string", "Topic or question to recall")
+                )
+            )
+        )
+
+        // 24. IMAGE GENERATION & SHARING
+        register(
+            AgentTool(
+                name = "generate_image",
+                description = "Generates an image from a detailed visual prompt using the configured image generation provider (Pollinations, Imagen 3, DALL-E, or Ollama).",
+                parameters = listOf(
+                    ToolParameter("prompt", "string", "Detailed descriptive visual prompt for the image generation engine"),
+                    ToolParameter("aspect_ratio", "string", "Aspect ratio: '1:1', '16:9', '9:16', '4:3', or '3:4'", isRequired = false)
+                )
+            )
+        )
+
+        register(
+            AgentTool(
+                name = "save_image_to_gallery",
+                description = "Saves a generated image to the Android system gallery / photos library.",
+                parameters = listOf(
+                    ToolParameter("file_path", "string", "Local file path of the image to save", isRequired = false)
+                )
+            )
+        )
+
+        register(
+            AgentTool(
+                name = "share_image",
+                description = "Shares an image with another application such as WhatsApp or opens the Android share sheet.",
+                parameters = listOf(
+                    ToolParameter("file_path", "string", "Local file path of the image to share", isRequired = false),
+                    ToolParameter("recipient_app", "string", "Optional target app package name (e.g. 'com.whatsapp')", isRequired = false),
+                    ToolParameter("caption", "string", "Optional caption message to accompany the image", isRequired = false)
+                )
             )
         )
     }

@@ -13,37 +13,36 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,13 +64,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.SnowPreferences
+import com.example.data.model.ChatMessage
 import com.example.ui.components.CameraSheet
+import com.example.ui.components.ChatMessageBubble
+import com.example.ui.components.ChatSuggestionsRow
 import com.example.ui.components.ConfigDialog
 import com.example.ui.components.ConfirmationDialog
 import com.example.ui.components.DiagnosticsSheet
 import com.example.ui.components.HistorySheet
 import com.example.ui.components.MemorySheet
-import com.example.ui.components.QuickCommandsBar
+import com.example.ui.components.MessageInputBar
+import com.example.ui.components.ThinkingBubble
 import com.example.ui.orb.VoiceOrb
 import com.example.voice.VoiceState
 
@@ -90,6 +93,7 @@ fun SnowMainScreen(
     val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val statusBannerText by viewModel.statusBannerText.collectAsStateWithLifecycle()
     val pendingConfirmation by viewModel.pendingConfirmationResponse.collectAsStateWithLifecycle()
+    val isProcessingPrompt by viewModel.isProcessingPrompt.collectAsStateWithLifecycle()
 
     val showConfigDialog by viewModel.showConfigDialog.collectAsStateWithLifecycle()
     val showCameraSheet by viewModel.showCameraSheet.collectAsStateWithLifecycle()
@@ -97,8 +101,8 @@ fun SnowMainScreen(
     val showMemorySheet by viewModel.showMemorySheet.collectAsStateWithLifecycle()
     val showDiagnosticsSheet by viewModel.showDiagnosticsSheet.collectAsStateWithLifecycle()
 
-    var showTextInput by remember { mutableStateOf(false) }
-    var manualTextQuery by remember { mutableStateOf("") }
+    var typedInputText by remember { mutableStateOf("") }
+    val chatListState = rememberLazyListState()
 
     var hasAudioPermission by remember {
         mutableStateOf(
@@ -139,6 +143,14 @@ fun SnowMainScreen(
         }
     }
 
+    // Auto-scroll to latest message whenever messages update, or transcript changes, or thinking state changes
+    LaunchedEffect(allMessages.size, partialTranscript, isProcessingPrompt) {
+        val totalCount = allMessages.size + (if (isProcessingPrompt) 1 else 0) + (if (partialTranscript.isNotBlank()) 1 else 0)
+        if (totalCount > 0) {
+            chatListState.animateScrollToItem(totalCount)
+        }
+    }
+
     Surface(
         modifier = modifier.fillMaxSize(),
         color = Color(0xFF030712)
@@ -161,7 +173,8 @@ fun SnowMainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .imePadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // 1. Top Bar with Action Icons
@@ -175,108 +188,191 @@ fun SnowMainScreen(
                     onSettingsClick = { viewModel.openConfigDialog() }
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 2. Central Voice Orb
+                // 2. Central Area: Chat Stream or Empty State with Voice Orb
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        VoiceOrb(
-                            voiceState = voiceState,
-                            rmsAmplitude = rmsAmplitude,
-                            onClick = { viewModel.openConfigDialog() },
-                            modifier = Modifier.padding(12.dp),
-                            size = 260.dp
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Status Badge / Agent Progress Banner
-                        StatusBadge(
-                            voiceState = voiceState,
-                            statusBanner = statusBannerText
-                        )
-                    }
-                }
-
-                // 3. Live Speech & AI Transcript Display
-                TranscriptCard(
-                    partialTranscript = partialTranscript,
-                    lastAiResponse = lastResponse,
-                    voiceState = voiceState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                )
-
-                // Optional Manual Text Input Row
-                AnimatedVisibility(
-                    visible = showTextInput,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = manualTextQuery,
-                            onValueChange = { manualTextQuery = it },
+                    if (allMessages.isEmpty()) {
+                        // Empty State: Hero Voice Orb + Suggestions
+                        Column(
                             modifier = Modifier
-                                .weight(1f)
-                                .testTag("manual_text_input"),
-                            placeholder = { Text("Ask Snow anything…", color = Color(0xFF64748B)) },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFF00E5FF),
-                                unfocusedBorderColor = Color(0xFF1E293B),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedContainerColor = Color(0xFF0A1120),
-                                unfocusedContainerColor = Color(0xFF0A1120)
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(
-                            onClick = {
-                                if (manualTextQuery.isNotBlank()) {
-                                    viewModel.handleUserPrompt(manualTextQuery)
-                                    manualTextQuery = ""
-                                }
-                            },
-                            modifier = Modifier
-                                .background(Color(0xFF00E5FF), CircleShape)
-                                .testTag("send_manual_text_button")
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color(0xFF050B14))
+                            VoiceOrb(
+                                voiceState = voiceState,
+                                rmsAmplitude = rmsAmplitude,
+                                onClick = {
+                                    if (hasAudioPermission) {
+                                        viewModel.toggleListening()
+                                    } else {
+                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
+                                modifier = Modifier.padding(12.dp),
+                                size = 220.dp
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            StatusBadge(
+                                voiceState = voiceState,
+                                statusBanner = statusBannerText
+                            )
+
+                            if (voiceState == VoiceState.SPEAKING || isProcessingPrompt) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = { viewModel.interruptCurrentTask() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(34.dp).testTag("hero_interrupt_button")
+                                ) {
+                                    Icon(Icons.Default.Stop, contentDescription = "Interrupt", tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("STOP / INTERRUPT", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Text(
+                                text = "How can I help you today?",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Type below or tap the microphone to speak.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF94A3B8)
+                            )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            ChatSuggestionsRow(
+                                onSuggestionSelected = { prompt ->
+                                    viewModel.handleUserPrompt(prompt, isTyped = true)
+                                }
+                            )
+                        }
+                    } else {
+                        // Ongoing Conversation Stream
+                        LazyColumn(
+                            state = chatListState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("chat_messages_list")
+                        ) {
+                            // Header: Compact Voice Orb & Status
+                            item(key = "orb_header") {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    VoiceOrb(
+                                        voiceState = voiceState,
+                                        rmsAmplitude = rmsAmplitude,
+                                        onClick = {
+                                            if (hasAudioPermission) {
+                                                viewModel.toggleListening()
+                                            } else {
+                                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            }
+                                        },
+                                        modifier = Modifier.size(90.dp),
+                                        size = 90.dp
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    StatusBadge(
+                                        voiceState = voiceState,
+                                        statusBanner = statusBannerText
+                                    )
+                                    if (voiceState == VoiceState.SPEAKING || isProcessingPrompt) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Button(
+                                            onClick = { viewModel.interruptCurrentTask() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                            shape = RoundedCornerShape(14.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp).testTag("list_header_interrupt_button")
+                                        ) {
+                                            Icon(Icons.Default.Stop, contentDescription = "Interrupt", tint = Color.White, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("STOP / INTERRUPT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Saved Messages
+                            items(
+                                items = allMessages,
+                                key = { it.id }
+                            ) { message ->
+                                ChatMessageBubble(
+                                    message = message,
+                                    onDelete = { id -> viewModel.deleteMessage(id) },
+                                    onSaveImage = { uri -> viewModel.saveImageToGallery(uri) },
+                                    onShareImage = { uri -> viewModel.shareImage(uri) }
+                                )
+                            }
+
+                            // Live Voice Input Transcript
+                            if (partialTranscript.isNotBlank()) {
+                                item(key = "live_partial_transcript") {
+                                    ChatMessageBubble(
+                                        message = ChatMessage(
+                                            id = -1,
+                                            sender = "user",
+                                            content = partialTranscript,
+                                            timestamp = System.currentTimeMillis()
+                                        ),
+                                        onDelete = {}
+                                    )
+                                }
+                            }
+
+                            // Thinking / Agent Executing Indicator
+                            if (isProcessingPrompt) {
+                                item(key = "thinking_indicator") {
+                                    ThinkingBubble(status = statusBannerText)
+                                }
+                            }
                         }
                     }
                 }
 
-                // 4. Quick Commands Bar
-                QuickCommandsBar(
-                    onCommandSelected = { prompt ->
-                        viewModel.handleUserPrompt(prompt)
+                // 3. Compact Suggestions Bar above Input Field
+                if (allMessages.isNotEmpty()) {
+                    ChatSuggestionsRow(
+                        onSuggestionSelected = { prompt ->
+                            viewModel.handleUserPrompt(prompt, isTyped = true)
+                        }
+                    )
+                }
+
+                // 4. Modern Message Input Bar
+                MessageInputBar(
+                    text = typedInputText,
+                    onTextChange = { typedInputText = it },
+                    onSend = { textToSend ->
+                        val trimmed = textToSend.trim()
+                        if (trimmed.isNotBlank()) {
+                            typedInputText = ""
+                            viewModel.handleUserPrompt(trimmed, isTyped = true)
+                        }
                     },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 5. Bottom Action Controls Bar
-                BottomControlsBar(
                     voiceState = voiceState,
-                    showTextInput = showTextInput,
-                    onToggleTextInput = { showTextInput = !showTextInput },
                     onMicClick = {
                         if (hasAudioPermission) {
                             viewModel.toggleListening()
@@ -290,10 +386,12 @@ fun SnowMainScreen(
                         } else {
                             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                         }
-                    }
+                    },
+                    onInterruptClick = {
+                        viewModel.interruptCurrentTask()
+                    },
+                    isProcessing = isProcessingPrompt
                 )
-
-                Spacer(modifier = Modifier.height(10.dp))
             }
 
             // Dialogs & Sheets
@@ -328,7 +426,7 @@ fun SnowMainScreen(
                 CameraSheet(
                     onDismiss = { viewModel.closeCamera() },
                     onAnalyzeImage = { prompt, bitmap ->
-                        viewModel.handleUserPrompt(prompt, bitmap)
+                        viewModel.handleUserPrompt(prompt, bitmap, isTyped = true)
                     }
                 )
             }
@@ -494,7 +592,7 @@ private fun StatusBadge(
         VoiceState.THINKING -> "✦ $statusBanner" to Color(0xFFC084FC)
         VoiceState.SPEAKING -> "► Snow is speaking…" to Color(0xFF38BDF8)
         VoiceState.ERROR -> "⚠ Microphone / Network error" to Color(0xFFF87171)
-        VoiceState.IDLE -> (if (statusBanner != "Ready" && statusBanner.isNotBlank()) statusBanner else "Tap orb or say wake phrase") to Color(0xFF94A3B8)
+        VoiceState.IDLE -> (if (statusBanner != "Ready" && statusBanner.isNotBlank()) statusBanner else "Tap orb or type below") to Color(0xFF94A3B8)
     }
 
     Box(
@@ -510,111 +608,5 @@ private fun StatusBadge(
             color = statusColor,
             fontWeight = FontWeight.Medium
         )
-    }
-}
-
-@Composable
-private fun TranscriptCard(
-    partialTranscript: String,
-    lastAiResponse: String,
-    voiceState: VoiceState,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(20.dp))
-            .testTag("transcript_card"),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF09111E).copy(alpha = 0.85f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            if (partialTranscript.isNotBlank()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "You: ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF7DD3FC),
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = partialTranscript,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            Row(verticalAlignment = Alignment.Top) {
-                Text(
-                    text = "Snow: ",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF00E5FF),
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = lastAiResponse,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFE2E8F0),
-                    lineHeight = 20.sp
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BottomControlsBar(
-    voiceState: VoiceState,
-    showTextInput: Boolean,
-    onToggleTextInput: () -> Unit,
-    onMicClick: () -> Unit,
-    onCameraClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        FloatingActionButton(
-            onClick = onCameraClick,
-            containerColor = Color(0xFF131D31),
-            contentColor = Color(0xFF00E5FF),
-            shape = CircleShape,
-            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
-            modifier = Modifier.testTag("camera_vision_fab")
-        ) {
-            Icon(Icons.Default.CameraAlt, contentDescription = "Camera Vision")
-        }
-
-        FloatingActionButton(
-            onClick = onMicClick,
-            containerColor = if (voiceState == VoiceState.LISTENING) Color(0xFF00E5FF) else if (voiceState == VoiceState.SPEAKING) Color(0xFFEF4444) else Color(0xFF0284C7),
-            contentColor = if (voiceState == VoiceState.LISTENING) Color(0xFF050B14) else Color.White,
-            shape = CircleShape,
-            modifier = Modifier
-                .size(68.dp)
-                .testTag("microphone_fab")
-        ) {
-            Icon(
-                imageVector = if (voiceState == VoiceState.LISTENING) Icons.Default.GraphicEq else if (voiceState == VoiceState.SPEAKING) Icons.Default.Stop else Icons.Default.Mic,
-                contentDescription = "Microphone",
-                modifier = Modifier.size(32.dp)
-            )
-        }
-
-        FloatingActionButton(
-            onClick = onToggleTextInput,
-            containerColor = if (showTextInput) Color(0xFF00E5FF).copy(alpha = 0.25f) else Color(0xFF131D31),
-            contentColor = Color(0xFF00E5FF),
-            shape = CircleShape,
-            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp),
-            modifier = Modifier.testTag("keyboard_toggle_fab")
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Text Query")
-        }
     }
 }

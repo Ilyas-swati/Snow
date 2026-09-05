@@ -101,6 +101,62 @@ class SnowPreferences(context: Context) {
         get() = prefs.getString(KEY_ANTHROPIC_MODEL, "claude-3-5-haiku-20241022") ?: "claude-3-5-haiku-20241022"
         set(value) = prefs.edit().putString(KEY_ANTHROPIC_MODEL, value.trim()).apply()
 
+    // Ollama AI Provider
+    var ollamaBaseUrl: String
+        get() = prefs.getString(KEY_OLLAMA_BASE_URL, "http://10.0.2.2:11434") ?: "http://10.0.2.2:11434"
+        set(value) = prefs.edit().putString(KEY_OLLAMA_BASE_URL, value.trim()).apply()
+
+    var ollamaApiKey: String
+        get() {
+            val secure = secretManager.getSecret(KEY_OLLAMA_API_KEY)
+            if (secure.isNotBlank()) return secure
+            return prefs.getString(KEY_OLLAMA_API_KEY, "") ?: ""
+        }
+        set(value) {
+            secretManager.storeSecret(KEY_OLLAMA_API_KEY, value.trim())
+            prefs.edit().putString(KEY_OLLAMA_API_KEY, if (value.isBlank()) "" else "SECURE").apply()
+        }
+
+    var ollamaModel: String
+        get() = prefs.getString(KEY_OLLAMA_MODEL, "llama3.2") ?: "llama3.2"
+        set(value) = prefs.edit().putString(KEY_OLLAMA_MODEL, value.trim()).apply()
+
+    var ollamaVisionModel: String
+        get() = prefs.getString(KEY_OLLAMA_VISION_MODEL, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_OLLAMA_VISION_MODEL, value.trim()).apply()
+
+    var ollamaTemperature: Float
+        get() = prefs.getFloat(KEY_OLLAMA_TEMPERATURE, 0.7f)
+        set(value) = prefs.edit().putFloat(KEY_OLLAMA_TEMPERATURE, value).apply()
+
+    var speakTypedResponses: String
+        get() = prefs.getString(KEY_SPEAK_TYPED_RESPONSES, SPEAK_TYPED_ALWAYS) ?: SPEAK_TYPED_ALWAYS
+        set(value) = prefs.edit().putString(KEY_SPEAK_TYPED_RESPONSES, value).apply()
+
+    // Image Generation Provider (Req 29)
+    var imageGenProvider: String
+        get() = prefs.getString(KEY_IMAGE_PROVIDER, IMAGE_PROVIDER_POLLINATIONS) ?: IMAGE_PROVIDER_POLLINATIONS
+        set(value) = prefs.edit().putString(KEY_IMAGE_PROVIDER, value).apply()
+
+    var imageGenModel: String
+        get() = prefs.getString(KEY_IMAGE_MODEL, "flux") ?: "flux"
+        set(value) = prefs.edit().putString(KEY_IMAGE_MODEL, value.trim()).apply()
+
+    var imageGenEndpoint: String
+        get() = prefs.getString(KEY_IMAGE_ENDPOINT, "https://image.pollinations.ai/prompt") ?: "https://image.pollinations.ai/prompt"
+        set(value) = prefs.edit().putString(KEY_IMAGE_ENDPOINT, value.trim()).apply()
+
+    var imageGenApiKey: String
+        get() {
+            val secure = secretManager.getSecret(KEY_IMAGE_API_KEY)
+            if (secure.isNotBlank()) return secure
+            return prefs.getString(KEY_IMAGE_API_KEY, "") ?: ""
+        }
+        set(value) {
+            secretManager.storeSecret(KEY_IMAGE_API_KEY, value.trim())
+            prefs.edit().putString(KEY_IMAGE_API_KEY, if (value.isBlank()) "" else "SECURE").apply()
+        }
+
     // Custom REST Provider (Groq / Ollama / OpenAI-compatible / Local)
     var customRestEndpoint: String
         get() = prefs.getString(KEY_CUSTOM_REST_ENDPOINT, "https://api.groq.com/openai/v1") ?: "https://api.groq.com/openai/v1"
@@ -218,6 +274,30 @@ class SnowPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_BG_SERVICE, false)
         set(value) = prefs.edit().putBoolean(KEY_BG_SERVICE, value).apply()
 
+    // Image Generation Provider Settings
+    var imageGenerationProvider: String
+        get() = prefs.getString(KEY_IMAGE_PROVIDER, IMAGE_PROVIDER_POLLINATIONS) ?: IMAGE_PROVIDER_POLLINATIONS
+        set(value) = prefs.edit().putString(KEY_IMAGE_PROVIDER, value).apply()
+
+    var imageGenerationModel: String
+        get() = prefs.getString(KEY_IMAGE_MODEL, "flux") ?: "flux"
+        set(value) = prefs.edit().putString(KEY_IMAGE_MODEL, value.trim()).apply()
+
+    var imageGenerationEndpoint: String
+        get() = prefs.getString(KEY_IMAGE_ENDPOINT, "https://image.pollinations.ai/prompt") ?: "https://image.pollinations.ai/prompt"
+        set(value) = prefs.edit().putString(KEY_IMAGE_ENDPOINT, value.trim()).apply()
+
+    var imageGenerationApiKey: String
+        get() {
+            val secure = secretManager.getSecret(KEY_IMAGE_API_KEY)
+            if (secure.isNotBlank()) return secure
+            return prefs.getString(KEY_IMAGE_API_KEY, "") ?: ""
+        }
+        set(value) {
+            secretManager.storeSecret(KEY_IMAGE_API_KEY, value.trim())
+            prefs.edit().putString(KEY_IMAGE_API_KEY, if (value.isBlank()) "" else "SECURE").apply()
+        }
+
     fun getApiKeyForProvider(providerId: String): String {
         return when (providerId) {
             TTS_PROVIDER_OPENAI -> openAiApiKey
@@ -250,10 +330,15 @@ class SnowPreferences(context: Context) {
         const val LANG_PS = "PS"
 
         const val PROVIDER_GEMINI = "GEMINI"
+        const val PROVIDER_OLLAMA = "OLLAMA"
         const val PROVIDER_OPENAI = "OPENAI"
         const val PROVIDER_ANTHROPIC = "ANTHROPIC"
         const val PROVIDER_CUSTOM_REST = "CUSTOM_REST"
         const val PROVIDER_NONE = "NONE"
+
+        const val SPEAK_TYPED_ALWAYS = "ALWAYS"
+        const val SPEAK_TYPED_VOICE_ONLY = "VOICE_ONLY"
+        const val SPEAK_TYPED_NEVER = "NEVER"
 
         const val SEARCH_PROVIDER_DUCKDUCKGO = "DUCKDUCKGO"
         const val SEARCH_PROVIDER_SERPER = "SERPER"
@@ -263,6 +348,18 @@ class SnowPreferences(context: Context) {
         const val TTS_PROVIDER_OPENAI = "OPENAI"
         const val TTS_PROVIDER_ELEVENLABS = "ELEVENLABS"
         const val TTS_PROVIDER_GOOGLE_CLOUD = "GOOGLE_CLOUD"
+
+        // Image Generation Providers
+        const val IMAGE_PROVIDER_POLLINATIONS = "POLLINATIONS"
+        const val IMAGE_PROVIDER_GEMINI_IMAGEN = "GEMINI_IMAGEN"
+        const val IMAGE_PROVIDER_OPENAI_DALLE = "OPENAI_DALLE"
+        const val IMAGE_PROVIDER_OLLAMA = "OLLAMA"
+        const val IMAGE_PROVIDER_CUSTOM_REST = "CUSTOM_REST"
+
+        const val IMG_PROVIDER_POLLINATIONS = IMAGE_PROVIDER_POLLINATIONS
+        const val IMG_PROVIDER_OPENAI = IMAGE_PROVIDER_OPENAI_DALLE
+        const val IMG_PROVIDER_OLLAMA = IMAGE_PROVIDER_OLLAMA
+        const val IMG_PROVIDER_CUSTOM = IMAGE_PROVIDER_CUSTOM_REST
 
         private const val KEY_ASSISTANT_NAME = "assistant_name"
         private const val KEY_WAKE_PHRASE = "wake_phrase"
@@ -276,6 +373,16 @@ class SnowPreferences(context: Context) {
         private const val KEY_OPENAI_MODEL = "openai_model"
         private const val KEY_ANTHROPIC_API_KEY = "anthropic_api_key"
         private const val KEY_ANTHROPIC_MODEL = "anthropic_model"
+        private const val KEY_OLLAMA_BASE_URL = "ollama_base_url"
+        private const val KEY_OLLAMA_API_KEY = "ollama_api_key"
+        private const val KEY_OLLAMA_MODEL = "ollama_model"
+        private const val KEY_OLLAMA_VISION_MODEL = "ollama_vision_model"
+        private const val KEY_OLLAMA_TEMPERATURE = "ollama_temperature"
+        private const val KEY_SPEAK_TYPED_RESPONSES = "speak_typed_responses"
+        private const val KEY_IMAGE_PROVIDER = "image_generation_provider"
+        private const val KEY_IMAGE_MODEL = "image_generation_model"
+        private const val KEY_IMAGE_ENDPOINT = "image_generation_endpoint"
+        private const val KEY_IMAGE_API_KEY = "image_generation_api_key"
         private const val KEY_CUSTOM_REST_ENDPOINT = "custom_rest_endpoint"
         private const val KEY_CUSTOM_REST_API_KEY = "custom_rest_api_key"
         private const val KEY_CUSTOM_REST_MODEL = "custom_rest_model"

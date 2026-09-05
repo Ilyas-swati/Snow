@@ -57,6 +57,24 @@ class VoiceEngine(
     private var isContinuousListeningRequested = true
     private var isSpeaking = false
 
+    var onInterruptionRequested: ((reason: String) -> Unit)? = null
+
+    fun isCurrentlySpeaking(): Boolean = isSpeaking || _voiceState.value == VoiceState.SPEAKING
+
+    companion object {
+        val INTERRUPT_COMMANDS = listOf(
+            "ruko", "ruk jao", "stop", "bas", "chup", "wait", "sun meri baat",
+            "ek minute", "cancel", "cancel it", "khamosh", "thehro", "rukna"
+        )
+
+        fun isInterruptionWord(text: String): Boolean {
+            val clean = text.trim().lowercase()
+            return INTERRUPT_COMMANDS.any {
+                clean == it || clean.startsWith("$it ") || clean.contains(it)
+            }
+        }
+    }
+
     val ttsProviderManager = TTSProviderManager(
         context = context,
         preferences = preferences,
@@ -64,6 +82,7 @@ class VoiceEngine(
         onPlaybackStarted = {
             isSpeaking = true
             _voiceState.value = VoiceState.SPEAKING
+            startListeningForBargeIn()
         },
         onPlaybackCompleted = {
             isSpeaking = false
@@ -216,6 +235,7 @@ class VoiceEngine(
         _voiceState.value = VoiceState.SPEAKING
         isSpeaking = true
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "SNOW_REPLY")
+        startListeningForBargeIn()
     }
 
     fun stopSpeaking() {
@@ -225,6 +245,38 @@ class VoiceEngine(
         if (_voiceState.value == VoiceState.SPEAKING) {
             _voiceState.value = VoiceState.IDLE
         }
+    }
+
+    fun startListeningForBargeIn() {
+        if (!preferences.interruptWhileSpeaking) return
+        mainHandler.postDelayed({
+            if (isSpeaking && _voiceState.value == VoiceState.SPEAKING) {
+                try {
+                    if (speechRecognizer == null) {
+                        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                            setRecognitionListener(this@VoiceEngine)
+                        }
+                    }
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                        putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+                        val languageTag = when (preferences.languageMode) {
+                            SnowPreferences.LANG_HI -> "hi-IN"
+                            SnowPreferences.LANG_UR -> "ur-PK"
+                            SnowPreferences.LANG_ROMAN_UR -> "en-IN"
+                            SnowPreferences.LANG_PS -> "ps-AF"
+                            SnowPreferences.LANG_EN -> "en-US"
+                            else -> Locale.getDefault().toLanguageTag()
+                        }
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                    }
+                    speechRecognizer?.startListening(intent)
+                } catch (e: Exception) {
+                    Log.w("VoiceEngine", "Could not start barge-in recognizer: ${e.message}")
+                }
+            }
+        }, 350)
     }
 
     fun startListening() {
@@ -308,6 +360,7 @@ class VoiceEngine(
         // Interruption handling: User started speaking while AI was speaking
         if (isSpeaking && preferences.interruptWhileSpeaking) {
             stopSpeaking()
+            onInterruptionRequested?.invoke("User voice detected")
         }
         _voiceState.value = VoiceState.LISTENING
     }
@@ -347,7 +400,15 @@ class VoiceEngine(
         _partialTranscript.value = ""
 
         if (recognizedText.isNotBlank()) {
-            checkWakeWordAndDispatch(recognizedText, isFinal = true)
+            if (isSpeaking && preferences.interruptWhileSpeaking) {
+                stopSpeaking()
+                onInterruptionRequested?.invoke(recognizedText)
+            }
+            if (isInterruptionWord(recognizedText)) {
+                onVoiceInputRecognized(recognizedText, true)
+            } else {
+                checkWakeWordAndDispatch(recognizedText, isFinal = true)
+            }
         } else if (preferences.continuousListening) {
             mainHandler.postDelayed({
                 if (_voiceState.value != VoiceState.SPEAKING && _voiceState.value != VoiceState.THINKING) {
@@ -362,6 +423,12 @@ class VoiceEngine(
         val text = matches?.firstOrNull() ?: ""
         if (text.isNotBlank()) {
             _partialTranscript.value = text
+            if (isSpeaking && preferences.interruptWhileSpeaking) {
+                if (isInterruptionWord(text) || text.trim().length >= 4) {
+                    stopSpeaking()
+                    onInterruptionRequested?.invoke(text)
+                }
+            }
             // Check wake word in real-time
             if (checkWakeWord(text)) {
                 onWakeWordDetected()

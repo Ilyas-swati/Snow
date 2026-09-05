@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -123,6 +125,21 @@ fun ConfigDialog(
     var customRestEndpoint by remember { mutableStateOf(preferences.customRestEndpoint) }
     var customRestApiKey by remember { mutableStateOf(preferences.customRestApiKey) }
     var customRestModel by remember { mutableStateOf(preferences.customRestModel) }
+
+    // Ollama Local / Remote Provider
+    var ollamaBaseUrl by remember { mutableStateOf(preferences.ollamaBaseUrl) }
+    var ollamaModel by remember { mutableStateOf(preferences.ollamaModel) }
+    var ollamaApiKey by remember { mutableStateOf(preferences.ollamaApiKey) }
+    var ollamaDiscoveredModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var isFetchingOllamaModels by remember { mutableStateOf(false) }
+    var speakTypedResponses by remember { mutableStateOf(preferences.speakTypedResponses) }
+
+    // Image Generation (Req 29)
+    var imageGenProvider by remember { mutableStateOf(preferences.imageGenProvider) }
+    var imageGenModel by remember { mutableStateOf(preferences.imageGenModel) }
+    var imageGenEndpoint by remember { mutableStateOf(preferences.imageGenEndpoint) }
+    var imageGenApiKey by remember { mutableStateOf(preferences.imageGenApiKey) }
+    var showImageGenApiKey by remember { mutableStateOf(false) }
 
     // Agent & Tools
     var assistantName by remember { mutableStateOf(preferences.assistantName) }
@@ -270,6 +287,12 @@ fun ConfigDialog(
                         text = { Text("Security", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
                         icon = { Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp)) }
                     )
+                    Tab(
+                        selected = selectedTab == 5,
+                        onClick = { selectedTab = 5 },
+                        text = { Text("Image Gen", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                        icon = { Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -292,9 +315,10 @@ fun ConfigDialog(
 
                         val aiProvidersList = listOf(
                             SnowPreferences.PROVIDER_GEMINI to "Google Gemini (Recommended)",
+                            SnowPreferences.PROVIDER_OLLAMA to "Ollama (Local / Remote AI Server)",
                             SnowPreferences.PROVIDER_OPENAI to "OpenAI (GPT-4o)",
                             SnowPreferences.PROVIDER_ANTHROPIC to "Anthropic (Claude 3.5)",
-                            SnowPreferences.PROVIDER_CUSTOM_REST to "Custom REST / Local (Groq, Ollama)"
+                            SnowPreferences.PROVIDER_CUSTOM_REST to "Custom REST / Local (Groq, vLLM)"
                         )
 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -380,6 +404,95 @@ fun ConfigDialog(
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     listOf("gpt-4o-mini", "gpt-4o").forEach { m ->
                                         FilterChip(selected = selectedOpenAiModel == m, onClick = { selectedOpenAiModel = m }, label = { Text(m, fontSize = 11.sp) })
+                                    }
+                                }
+                            }
+
+                            SnowPreferences.PROVIDER_OLLAMA -> {
+                                Text("Ollama Base URL", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
+                                Text("Reach your local Ollama server (e.g. on your LAN or host machine)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                OutlinedTextField(
+                                    value = ollamaBaseUrl,
+                                    onValueChange = { ollamaBaseUrl = it },
+                                    modifier = Modifier.fillMaxWidth().testTag("ollama_url_field"),
+                                    placeholder = { Text("http://10.0.2.2:11434 or http://192.168.1.50:11434", fontSize = 12.sp) },
+                                    singleLine = true
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { ollamaBaseUrl = "http://10.0.2.2:11434" },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Host Emulator (10.0.2.2)", fontSize = 10.sp)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { ollamaBaseUrl = "http://127.0.0.1:11434" },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Localhost (127.0.0.1)", fontSize = 10.sp)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Model Name", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
+                                OutlinedTextField(
+                                    value = ollamaModel,
+                                    onValueChange = { ollamaModel = it },
+                                    modifier = Modifier.fillMaxWidth().testTag("ollama_model_field"),
+                                    placeholder = { Text("llama3.2:3b, qwen2.5:7b, mistral, llava", fontSize = 12.sp) },
+                                    singleLine = true
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("Popular Models:", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                @OptIn(ExperimentalLayoutApi::class)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("llama3.2:3b", "qwen2.5:7b", "mistral:latest", "llava:7b", "gemma2:9b").forEach { m ->
+                                        FilterChip(
+                                            selected = ollamaModel == m,
+                                            onClick = { ollamaModel = m },
+                                            label = { Text(m, fontSize = 11.sp) }
+                                        )
+                                    }
+                                }
+
+                                if (ollamaDiscoveredModels.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text("Installed on Server:", fontSize = 11.sp, color = Color(0xFF00E5FF))
+                                    @OptIn(ExperimentalLayoutApi::class)
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        ollamaDiscoveredModels.forEach { m ->
+                                            FilterChip(
+                                                selected = ollamaModel == m,
+                                                onClick = { ollamaModel = m },
+                                                label = { Text(m, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            isFetchingOllamaModels = true
+                                            val fetched = com.example.ai.provider.OllamaAIProvider.fetchInstalledModels(ollamaBaseUrl, ollamaApiKey)
+                                            ollamaDiscoveredModels = fetched
+                                            isFetchingOllamaModels = false
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !isFetchingOllamaModels
+                                ) {
+                                    if (isFetchingOllamaModels) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Querying Ollama...", fontSize = 11.sp)
+                                    } else {
+                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Fetch Installed Models from Server", fontSize = 12.sp)
                                     }
                                 }
                             }
@@ -562,6 +675,26 @@ fun ConfigDialog(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
+                        // Speak Typed Responses Selector
+                        Text("Speak Typed Responses", style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Choose when Snow speaks out loud if you type a message:", style = MaterialTheme.typography.bodySmall, color = Color(0xFF94A3B8))
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                SnowPreferences.SPEAK_TYPED_ALWAYS to "Always Speak",
+                                SnowPreferences.SPEAK_TYPED_VOICE_ONLY to "Voice Input Only",
+                                SnowPreferences.SPEAK_TYPED_NEVER to "Never Speak (Text Only)"
+                            ).forEach { (mode, label) ->
+                                FilterChip(
+                                    selected = speakTypedResponses == mode,
+                                    onClick = { speakTypedResponses = mode },
+                                    label = { Text(label, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
                         // Pitch and Rate Sliders
                         Text("Female Voice Pitch: ${String.format("%.2f", pitchValue)}x", color = Color.White, fontSize = 12.sp)
                         Slider(
@@ -663,6 +796,132 @@ fun ConfigDialog(
                             Text("Reset All Stored Data & Keys")
                         }
                     }
+
+                    5 -> {
+                        // TAB 5: Image Generation (Req 29)
+                        Text(
+                            text = "Image Generation Provider",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Configure image-generation services (Pollinations, OpenAI DALL-E, Ollama, or Custom). API keys are optional and never hardcoded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF94A3B8),
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+
+                        val imgProviders = listOf(
+                            SnowPreferences.IMG_PROVIDER_POLLINATIONS to "Pollinations (Free / No Key)",
+                            SnowPreferences.IMG_PROVIDER_OPENAI to "OpenAI (DALL-E 3)",
+                            SnowPreferences.IMG_PROVIDER_OLLAMA to "Ollama (Local Models)",
+                            SnowPreferences.IMG_PROVIDER_CUSTOM to "Custom REST / HTTP"
+                        )
+
+                        imgProviders.forEach { (provId, label) ->
+                            val isSelected = imageGenProvider == provId
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        imageGenProvider = provId
+                                        when (provId) {
+                                            SnowPreferences.IMG_PROVIDER_POLLINATIONS -> {
+                                                imageGenModel = "flux"
+                                                imageGenEndpoint = "https://image.pollinations.ai/prompt"
+                                            }
+                                            SnowPreferences.IMG_PROVIDER_OPENAI -> {
+                                                imageGenModel = "dall-e-3"
+                                                imageGenEndpoint = "https://api.openai.com/v1/images/generations"
+                                            }
+                                            SnowPreferences.IMG_PROVIDER_OLLAMA -> {
+                                                imageGenModel = "stable-diffusion"
+                                                imageGenEndpoint = "http://10.0.2.2:11434"
+                                            }
+                                        }
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) Color(0xFF00384D) else Color(0xFF0F172A)
+                                ),
+                                border = BorderStroke(1.dp, if (isSelected) Color(0xFF00E5FF) else Color(0xFF1E293B)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(label, color = if (isSelected) Color(0xFF00F0FF) else Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    if (isSelected) {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF00F0FF), modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        OutlinedTextField(
+                            value = imageGenModel,
+                            onValueChange = { imageGenModel = it },
+                            label = { Text("Image Generation Model", color = Color(0xFF94A3B8)) },
+                            placeholder = { Text("e.g. flux, dall-e-3, stable-diffusion", color = Color(0xFF475569)) },
+                            modifier = Modifier.fillMaxWidth().testTag("image_gen_model_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00E5FF),
+                                unfocusedBorderColor = Color(0xFF1E293B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = imageGenEndpoint,
+                            onValueChange = { imageGenEndpoint = it },
+                            label = { Text("Image Generation Endpoint / URL", color = Color(0xFF94A3B8)) },
+                            placeholder = { Text("e.g. https://api.openai.com/v1/images/generations", color = Color(0xFF475569)) },
+                            modifier = Modifier.fillMaxWidth().testTag("image_gen_endpoint_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00E5FF),
+                                unfocusedBorderColor = Color(0xFF1E293B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = imageGenApiKey,
+                            onValueChange = { imageGenApiKey = it },
+                            label = { Text("Optional API Key / Token", color = Color(0xFF94A3B8)) },
+                            placeholder = { Text("Leave blank if no key is needed", color = Color(0xFF475569)) },
+                            visualTransformation = if (showImageGenApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showImageGenApiKey = !showImageGenApiKey }) {
+                                    Icon(
+                                        imageVector = if (showImageGenApiKey) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle Key Visibility",
+                                        tint = Color(0xFF64748B)
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("image_gen_key_input"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF00E5FF),
+                                unfocusedBorderColor = Color(0xFF1E293B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            singleLine = true
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -686,6 +945,16 @@ fun ConfigDialog(
 
                             preferences.customApiKey = geminiApiKeyText
                             preferences.apiEndpointModel = selectedGeminiModel
+
+                            preferences.ollamaBaseUrl = ollamaBaseUrl
+                            preferences.ollamaModel = ollamaModel
+                            preferences.ollamaApiKey = ollamaApiKey
+                            preferences.speakTypedResponses = speakTypedResponses
+
+                            preferences.imageGenProvider = imageGenProvider
+                            preferences.imageGenModel = imageGenModel
+                            preferences.imageGenEndpoint = imageGenEndpoint
+                            preferences.imageGenApiKey = imageGenApiKey
 
                             preferences.openAiApiKey = openAiApiKeyText
                             preferences.openAiModel = selectedOpenAiModel

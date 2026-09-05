@@ -9,11 +9,16 @@ import com.example.data.model.ChatMessage
 class AIProviderManager(private val preferences: SnowPreferences) {
 
     val geminiProvider = GeminiAIProvider()
+    val ollamaProvider = OllamaAIProvider(
+        getBaseUrl = { preferences.ollamaBaseUrl },
+        getApiKey = { preferences.ollamaApiKey },
+        getTemperature = { preferences.ollamaTemperature }
+    )
     val openAiProvider = OpenAIAIProvider()
     val anthropicProvider = AnthropicAIProvider()
     val customRestProvider = CustomRestAIProvider { preferences.customRestEndpoint }
 
-    private val providers = listOf(geminiProvider, openAiProvider, anthropicProvider, customRestProvider)
+    private val providers = listOf(geminiProvider, ollamaProvider, openAiProvider, anthropicProvider, customRestProvider)
 
     fun getProvider(id: String): AIProvider {
         return providers.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: geminiProvider
@@ -34,6 +39,7 @@ class AIProviderManager(private val preferences: SnowPreferences) {
     private fun getApiKeyFor(provider: AIProvider): String {
         return when (provider.id) {
             "GEMINI" -> preferences.effectiveApiKey
+            "OLLAMA" -> preferences.ollamaApiKey
             "OPENAI" -> preferences.openAiApiKey
             "ANTHROPIC" -> preferences.anthropicApiKey
             "CUSTOM_REST" -> preferences.customRestApiKey
@@ -44,6 +50,7 @@ class AIProviderManager(private val preferences: SnowPreferences) {
     private fun getModelFor(provider: AIProvider): String {
         return when (provider.id) {
             "GEMINI" -> preferences.apiEndpointModel
+            "OLLAMA" -> preferences.ollamaModel
             "OPENAI" -> preferences.openAiModel
             "ANTHROPIC" -> preferences.anthropicModel
             "CUSTOM_REST" -> preferences.customRestModel
@@ -102,6 +109,26 @@ class AIProviderManager(private val preferences: SnowPreferences) {
 
             if (fallbackResult.error == null) {
                 return fallbackResult
+            }
+        }
+
+        // Automatic fail-safe: If primary is not Gemini and is offline / unreachable, and Gemini is available
+        if (primary.id != "GEMINI" && preferences.effectiveApiKey.isNotBlank()) {
+            Log.w("AIProviderManager", "${primary.displayName} unreachable (${primaryResult.error}). Engaging automatic fallback to Gemini...")
+            onStatusUpdate("Failing over to Google Gemini…")
+            val geminiResult = geminiProvider.generateAgentTurn(
+                prompt = prompt,
+                apiKey = preferences.effectiveApiKey,
+                modelName = preferences.apiEndpointModel,
+                systemInstruction = systemInstruction,
+                tools = tools,
+                conversationHistory = conversationHistory,
+                imageBitmap = imageBitmap,
+                toolOutputsContext = toolOutputsContext
+            )
+
+            if (geminiResult.error == null) {
+                return geminiResult
             }
         }
 
