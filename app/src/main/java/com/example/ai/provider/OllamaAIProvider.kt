@@ -34,13 +34,55 @@ class OllamaAIProvider(
     override val requiresApiKey: Boolean = false
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(false)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(35, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    override fun getCapabilities(modelName: String): Set<ModelCapability> {
+        val lower = modelName.lowercase()
+        val caps = mutableSetOf(ModelCapability.TEXT)
+
+        if (lower.contains("vision") || lower.contains("llava") ||
+            lower.contains("minicpm-v") || lower.contains("moondream") ||
+            lower.contains("bakllava") || lower.contains("qwen2-vl") ||
+            lower.contains("mllama") || lower.contains("llama3.2-vision")
+        ) {
+            caps.add(ModelCapability.VISION)
+        }
+
+        if (lower.contains("deepseek-r1") || lower.contains("qwq")) {
+            caps.add(ModelCapability.REASONING)
+        }
+
+        if (lower.contains("code") || lower.contains("starcoder")) {
+            caps.add(ModelCapability.CODE)
+        }
+
+        // Native or structured tool calling support
+        caps.add(ModelCapability.TOOL_CALLING)
+
+        return caps
+    }
+
+    override suspend fun listAvailableModels(): List<ModelInfo> {
+        val models = listModels()
+        return models.map { m ->
+            val caps = mutableSetOf(ModelCapability.TEXT)
+            if (m.supportsVision) caps.add(ModelCapability.VISION)
+            caps.add(ModelCapability.TOOL_CALLING)
+            ModelInfo(
+                id = m.name,
+                displayName = "${m.name} (${if (m.parameterSize.isNotBlank()) m.parameterSize else "local"})",
+                capabilities = caps,
+                description = "Installed on Ollama server"
+            )
+        }
+    }
+
 
     /**
      * Queries /api/tags from Ollama to retrieve all installed models.
@@ -174,15 +216,19 @@ class OllamaAIProvider(
             userMsgObj.put("content", userContent)
 
             // Optional image if supported
-            if (imageBitmap != null) {
+            val supportsVision = getCapabilities(effectiveModel).contains(ModelCapability.VISION)
+            if (imageBitmap != null && supportsVision) {
                 val imagesArray = JSONArray()
                 val stream = ByteArrayOutputStream()
                 imageBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
                 val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
                 imagesArray.put(base64)
                 userMsgObj.put("images", imagesArray)
+            } else if (imageBitmap != null && !supportsVision) {
+                userMsgObj.put("content", userContent + "\n\n[Note: Active model '$effectiveModel' is text-only. Visual inspection is not supported by this model.]")
             }
             messages.put(userMsgObj)
+
 
             root.put("messages", messages)
 
@@ -238,8 +284,12 @@ class OllamaAIProvider(
         customEndpoint: String
     ): ConnectionTestResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
-        val baseUrl = (if (customEndpoint.isNotBlank()) customEndpoint else getBaseUrl()).trim().trimEnd('/')
+        val rawUrl = (if (customEndpoint.isNotBlank()) customEndpoint else getBaseUrl()).trim()
+        val baseUrl = rawUrl.trimEnd('/')
         val url = "$baseUrl/api/tags"
+
+        // Android loopback address diagnostic helper
+        val isLoopback = baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1")
 
         try {
             val reqBuilder = Request.Builder().url(url).get()
@@ -250,31 +300,58 @@ class OllamaAIProvider(
 
             client.newCall(reqBuilder.build()).execute().use { response ->
                 val latency = System.currentTimeMillis() - startTime
+                val code = response.code
                 if (response.isSuccessful) {
                     val body = response.body?.string() ?: ""
                     val json = JSONObject(body)
-                    val count = json.optJSONArray("models")?.length() ?: 0
+                    val modelsArray = json.optJSONArray("models")
+                    val count = modelsArray?.length() ?: 0
+                    val discovered = mutableListOf<String>()
+                    if (modelsArray != null) {
+                        for (i in 0 until modelsArray.length()) {
+                            val mName = modelsArray.getJSONObject(i).optString("name", "")
+                            if (mName.isNotBlank()) discovered.add(mName)
+                        }
+                    }
+
                     ConnectionTestResult(
                         isSuccess = true,
                         message = "Connected to Ollama! Found $count model(s).",
-                        latencyMs = latency
+                        latencyMs = latency,
+                        reachable = true,
+                        httpStatusCode = code,
+                        discoveredModels = discovered
                     )
                 } else {
                     ConnectionTestResult(
                         isSuccess = false,
-                        message = "Ollama returned HTTP ${response.code}",
-                        latencyMs = latency
+                        message = "Ollama server reached but returned HTTP $code.",
+                        latencyMs = latency,
+                        reachable = true,
+                        httpStatusCode = code
                     )
                 }
             }
         } catch (e: Exception) {
+            val latency = System.currentTimeMillis() - startTime
+            val msg = buildString {
+                append("Connection failed: ")
+                val err = e.localizedMessage ?: e.message ?: e.javaClass.simpleName
+                append(err)
+                if (isLoopback) {
+                    append("\n\nNote: 'localhost' or '127.0.0.1' points to this Android device. If Ollama runs on your computer, use 'http://10.0.2.2:11434' in the emulator or your PC's local Wi-Fi IP (e.g. 'http://192.168.1.50:11434'). Also ensure OLLAMA_HOST=0.0.0.0 is set on the host.")
+                }
+            }
             ConnectionTestResult(
                 isSuccess = false,
-                message = "Failed to connect: ${e.localizedMessage ?: e.message}",
-                latencyMs = System.currentTimeMillis() - startTime
+                message = msg,
+                latencyMs = latency,
+                reachable = false,
+                httpStatusCode = 0
             )
         }
     }
+
 
     private fun parseToolCalls(content: String): List<ToolCallRequest> {
         val results = mutableListOf<ToolCallRequest>()

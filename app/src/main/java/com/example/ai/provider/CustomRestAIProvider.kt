@@ -12,6 +12,15 @@ class CustomRestAIProvider(
     override val displayName: String = "Custom REST / Local AI"
     override val requiresApiKey: Boolean = false
 
+    override fun getCapabilities(modelName: String): Set<ModelCapability> = setOf(
+        ModelCapability.TEXT,
+        ModelCapability.TOOL_CALLING
+    )
+
+    override suspend fun listAvailableModels(): List<ModelInfo> = listOf(
+        ModelInfo("default", "Default Endpoint Model", setOf(ModelCapability.TEXT, ModelCapability.TOOL_CALLING), "Configured via custom endpoint")
+    )
+
     override suspend fun generateAgentTurn(
         prompt: String,
         apiKey: String,

@@ -44,9 +44,16 @@ class PermissionManager(private val context: Context) {
         }
     }
 
+    fun hasOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else true
+    }
+
     fun isAccessibilityServiceEnabled(): Boolean = SnowAccessibilityService.isServiceRunning
 
     fun isNotificationListenerEnabled(): Boolean = SnowNotificationListenerService.isConnected
+
 
     fun getAllPermissionStatuses(): List<PermissionStatus> {
         return listOf(
@@ -138,6 +145,23 @@ class PermissionManager(private val context: Context) {
             openAppSettings()
         }
     }
+
+    fun openOverlaySettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                openAppSettings()
+            }
+        }
+    }
+
 
     fun requestMissingCorePermissions(activity: Activity) {
         val missing = mutableListOf<String>()

@@ -22,6 +22,20 @@ class AnthropicAIProvider : AIProvider {
     override val displayName: String = "Anthropic Claude"
     override val requiresApiKey: Boolean = true
 
+    override fun getCapabilities(modelName: String): Set<ModelCapability> = setOf(
+        ModelCapability.TEXT,
+        ModelCapability.VISION,
+        ModelCapability.TOOL_CALLING,
+        ModelCapability.CODE,
+        ModelCapability.REASONING
+    )
+
+    override suspend fun listAvailableModels(): List<ModelInfo> = listOf(
+        ModelInfo("claude-3-7-sonnet-20250219", "Claude 3.7 Sonnet", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.REASONING, ModelCapability.CODE), "Hybrid reasoning and coding model"),
+        ModelInfo("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "Industry-leading intelligence and vision"),
+        ModelInfo("claude-3-5-haiku-20241022", "Claude 3.5 Haiku", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "Fast and lightweight model")
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)

@@ -51,26 +51,26 @@ class ToolRegistry {
         )
 
         // 5. CLICK / TAP
-        register(
-            AgentTool(
-                name = "click_element",
-                description = "Clicks a button, tab, contact, or UI element matching text, contentDescription, or view ID on the current screen.",
-                parameters = listOf(
-                    ToolParameter("target", "string", "Visible text, description, or view ID of the element to click")
-                )
+        val clickTool = AgentTool(
+            name = "click_element",
+            description = "Clicks a button, tab, contact, or UI element matching text, contentDescription, or view ID on the current screen.",
+            parameters = listOf(
+                ToolParameter("target", "string", "Visible text, description, or view ID of the element to click")
             )
         )
+        register(clickTool)
+        register(clickTool.copy(name = "click"))
 
         // 6. LONG_CLICK
-        register(
-            AgentTool(
-                name = "long_click_element",
-                description = "Performs a long-press touch on an element matching text or description on screen.",
-                parameters = listOf(
-                    ToolParameter("target", "string", "Visible text or description of the element to long click")
-                )
+        val longClickTool = AgentTool(
+            name = "long_click_element",
+            description = "Performs a long-press touch on an element matching text or description on screen.",
+            parameters = listOf(
+                ToolParameter("target", "string", "Visible text or description of the element to long click")
             )
         )
+        register(longClickTool)
+        register(longClickTool.copy(name = "long_click"))
 
         // 7. TYPE_TEXT
         register(
@@ -94,32 +94,42 @@ class ToolRegistry {
         )
 
         // 9. SCROLL
-        register(
-            AgentTool(
-                name = "scroll_screen",
-                description = "Scrolls the current screen up or down.",
-                parameters = listOf(
-                    ToolParameter("direction", "string", "'DOWN' to scroll down (forward) or 'UP' to scroll up (backward)")
-                )
+        val scrollTool = AgentTool(
+            name = "scroll_screen",
+            description = "Scrolls the current screen up or down.",
+            parameters = listOf(
+                ToolParameter("direction", "string", "'DOWN' to scroll down (forward) or 'UP' to scroll up (backward)")
             )
         )
+        register(scrollTool)
+        register(AgentTool("scroll_up", "Scrolls screen up (backward).", emptyList()))
+        register(AgentTool("scroll_down", "Scrolls screen down (forward).", emptyList()))
 
         // 10. BACK & HOME
+        val backTool = AgentTool("press_back", "Triggers the system Back button action.", emptyList())
+        register(backTool)
+        register(backTool.copy(name = "back"))
+
+        val homeTool = AgentTool("press_home", "Triggers the system Home button action to go to home screen.", emptyList())
+        register(homeTool)
+        register(homeTool.copy(name = "home"))
+
+        // FIND_TEXT & FIND_ELEMENT
         register(
             AgentTool(
-                name = "press_back",
-                description = "Triggers the system Back button action.",
-                parameters = emptyList()
+                name = "find_text",
+                description = "Finds whether specific text is visible on the current screen.",
+                parameters = listOf(ToolParameter("text", "string", "Text to search for on screen"))
+            )
+        )
+        register(
+            AgentTool(
+                name = "find_element",
+                description = "Finds a UI element matching text, description, or id on screen.",
+                parameters = listOf(ToolParameter("target", "string", "Element name, description, or view ID"))
             )
         )
 
-        register(
-            AgentTool(
-                name = "press_home",
-                description = "Triggers the system Home button action to go to home screen.",
-                parameters = emptyList()
-            )
-        )
 
         // 11. CONTACT SELECTION / RESOLUTION
         register(
@@ -167,6 +177,15 @@ class ToolRegistry {
                 )
             )
         )
+        register(
+            AgentTool(
+                name = "open_file",
+                description = "Opens a file using system viewer or editor.",
+                parameters = listOf(
+                    ToolParameter("file_name", "string", "File name to open")
+                )
+            )
+        )
 
         // 15. SHARE_FILE
         register(
@@ -180,26 +199,40 @@ class ToolRegistry {
         )
 
         // 16. WAIT / SLEEP
+        val waitTool = AgentTool(
+            name = "wait_action",
+            description = "Pauses execution for a specified duration in milliseconds to allow UI to render.",
+            parameters = listOf(
+                ToolParameter("duration_ms", "string", "Milliseconds to wait (e.g. '1000')")
+            )
+        )
+        register(waitTool)
+        register(waitTool.copy(name = "wait"))
+
+        // 17. VERIFY_ACTION
+        val verifyTool = AgentTool(
+            name = "verify_action",
+            description = "Verifies that an expected UI text, element, or app package is now present on the screen.",
+            parameters = listOf(
+                ToolParameter("expected_text_or_pkg", "string", "Text or package expected on screen")
+            )
+        )
+        register(verifyTool)
+        register(verifyTool.copy(name = "verify"))
+
+        // SEND_MESSAGE (Generic)
         register(
             AgentTool(
-                name = "wait_action",
-                description = "Pauses execution for a specified duration in milliseconds to allow UI to render.",
+                name = "send_message",
+                description = "Sends a message to a recipient via messaging apps (e.g. WhatsApp or SMS).",
                 parameters = listOf(
-                    ToolParameter("duration_ms", "string", "Milliseconds to wait (e.g. '1000')")
+                    ToolParameter("recipient", "string", "Contact name or number"),
+                    ToolParameter("message", "string", "Message content"),
+                    ToolParameter("platform", "string", "Platform: 'whatsapp' or 'sms'", isRequired = false)
                 )
             )
         )
 
-        // 17. VERIFY_ACTION
-        register(
-            AgentTool(
-                name = "verify_action",
-                description = "Verifies that an expected UI text, element, or app package is now present on the screen.",
-                parameters = listOf(
-                    ToolParameter("expected_text_or_pkg", "string", "Text or package expected on screen")
-                )
-            )
-        )
 
         // 18. WEB SEARCH
         register(

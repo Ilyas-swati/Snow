@@ -19,8 +19,13 @@ data class ToolExecutionResult(
     val isSuccess: Boolean,
     val output: String,
     val userVisibleMessage: String? = null,
-    val verified: Boolean = false
+    val verified: Boolean = false,
+    val error: String? = null,
+    val details: String = "",
+    val screenChanged: Boolean = false,
+    val verificationResult: String = ""
 )
+
 
 enum class AndroidActionType {
     OPEN_APP,

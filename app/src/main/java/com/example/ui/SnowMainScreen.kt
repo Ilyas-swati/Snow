@@ -32,14 +32,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +70,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.SnowPreferences
 import com.example.data.model.ChatMessage
+import com.example.service.SnowAccessibilityService
 import com.example.ui.components.CameraSheet
 import com.example.ui.components.ChatMessageBubble
 import com.example.ui.components.ChatSuggestionsRow
@@ -74,9 +80,11 @@ import com.example.ui.components.DiagnosticsSheet
 import com.example.ui.components.HistorySheet
 import com.example.ui.components.MemorySheet
 import com.example.ui.components.MessageInputBar
+import com.example.ui.components.StartupSetupCard
 import com.example.ui.components.ThinkingBubble
 import com.example.ui.orb.VoiceOrb
 import com.example.voice.VoiceState
+
 
 @Composable
 fun SnowMainScreen(
@@ -137,6 +145,16 @@ fun SnowMainScreen(
         }
     }
 
+    val isSetupDismissed by viewModel.isSetupDismissed.collectAsStateWithLifecycle()
+    val isAccessibilityEnabled = SnowAccessibilityService.isServiceRunning
+    val isAiProviderConfigured = when (viewModel.preferences.activeAiProvider) {
+        SnowPreferences.PROVIDER_OLLAMA -> viewModel.preferences.ollamaBaseUrl.isNotBlank()
+        SnowPreferences.PROVIDER_GEMINI -> viewModel.preferences.customApiKey.isNotBlank() || com.example.BuildConfig.GEMINI_API_KEY.isNotBlank()
+        SnowPreferences.PROVIDER_OPENAI -> viewModel.preferences.openAiApiKey.isNotBlank()
+        SnowPreferences.PROVIDER_ANTHROPIC -> viewModel.preferences.anthropicApiKey.isNotBlank()
+        else -> true
+    }
+
     LaunchedEffect(Unit) {
         viewModel.wakeWordDetectedEvent.collect {
             Toast.makeText(context, "❄ \"Snow\" Wake Word Detected!", Toast.LENGTH_SHORT).show()
@@ -177,7 +195,7 @@ fun SnowMainScreen(
                     .imePadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 1. Top Bar with Action Icons
+                // 1. Top Bar with Action Icons in Three-Dot Menu
                 TopBar(
                     assistantName = viewModel.preferences.assistantName,
                     language = viewModel.preferences.languageMode,
@@ -185,8 +203,25 @@ fun SnowMainScreen(
                     onMemoryClick = { viewModel.openMemorySheet() },
                     onDiagnosticsClick = { viewModel.openDiagnostics() },
                     onHistoryClick = { viewModel.openHistory() },
-                    onSettingsClick = { viewModel.openConfigDialog() }
+                    onSettingsClick = { viewModel.openConfigDialog() },
+                    onPermissionsClick = { viewModel.reopenSetupCard() },
+                    onClearChatClick = { viewModel.clearChatHistory() }
                 )
+
+                // 2. Startup Setup Card (Req 20)
+                StartupSetupCard(
+                    hasMicrophone = hasAudioPermission,
+                    hasAccessibility = isAccessibilityEnabled,
+                    hasAiProviderReady = isAiProviderConfigured,
+                    aiProviderName = viewModel.preferences.activeAiProvider,
+                    isDismissed = isSetupDismissed,
+                    onRequestMicrophone = { audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                    onRequestAccessibility = { viewModel.permissionManager.openAccessibilitySettings() },
+                    onConfigureAi = { viewModel.openConfigDialog() },
+                    onDismiss = { viewModel.dismissSetupCard() },
+                    onReopen = { viewModel.reopenSetupCard() }
+                )
+
 
                 // 2. Central Area: Chat Stream or Empty State with Voice Orb
                 Box(
@@ -487,7 +522,9 @@ private fun TopBar(
     onMemoryClick: () -> Unit,
     onDiagnosticsClick: () -> Unit,
     onHistoryClick: () -> Unit,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onPermissionsClick: () -> Unit,
+    onClearChatClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -549,38 +586,97 @@ private fun TopBar(
                 )
             }
 
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            IconButton(
-                onClick = onMemoryClick,
-                modifier = Modifier.size(36.dp).testTag("memory_button")
-            ) {
-                Icon(Icons.Default.Psychology, contentDescription = "Memory & Notes", tint = Color(0xFF00E5FF), modifier = Modifier.size(20.dp))
-            }
+            // Three-dot menu containing ALL settings and tools (Req 18 & 19)
+            var menuExpanded by remember { mutableStateOf(false) }
 
-            IconButton(
-                onClick = onDiagnosticsClick,
-                modifier = Modifier.size(36.dp).testTag("diagnostics_button")
-            ) {
-                Icon(Icons.Default.Build, contentDescription = "Diagnostics", tint = Color(0xFF38BDF8), modifier = Modifier.size(19.dp))
-            }
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.size(36.dp).testTag("three_dot_menu_button")
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "Menu",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
-            IconButton(
-                onClick = onHistoryClick,
-                modifier = Modifier.size(36.dp).testTag("history_button")
-            ) {
-                Icon(Icons.Default.History, contentDescription = "History", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    modifier = Modifier
+                        .background(Color(0xFF0F172A))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                        .testTag("three_dot_dropdown_menu")
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Settings & AI Brain", color = Color.White, fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onSettingsClick()
+                        },
+                        modifier = Modifier.testTag("menu_settings_item")
+                    )
 
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier.size(36.dp).testTag("settings_button")
-            ) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
+                    DropdownMenuItem(
+                        text = { Text("Ollama Diagnostics & Test", color = Color.White, fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.Build, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onDiagnosticsClick()
+                        },
+                        modifier = Modifier.testTag("menu_diagnostics_item")
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Memory & Saved Notes", color = Color.White, fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onMemoryClick()
+                        },
+                        modifier = Modifier.testTag("menu_memory_item")
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Conversation History", color = Color.White, fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onHistoryClick()
+                        },
+                        modifier = Modifier.testTag("menu_history_item")
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Permissions & Setup", color = Color.White, fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onPermissionsClick()
+                        },
+                        modifier = Modifier.testTag("menu_permissions_item")
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Clear Conversation", color = Color(0xFFEF4444), fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp)) },
+                        onClick = {
+                            menuExpanded = false
+                            onClearChatClick()
+                        },
+                        modifier = Modifier.testTag("menu_clear_chat_item")
+                    )
+                }
             }
         }
     }
 }
+
 
 @Composable
 private fun StatusBadge(

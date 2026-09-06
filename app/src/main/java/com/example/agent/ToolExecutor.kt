@@ -174,7 +174,7 @@ class ToolExecutor(
                             sendClicked = sendNodes[0].performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
                         }
                         if (!sendClicked) {
-                            sendClicked = service.clickElement("Send")
+                            sendClicked = service.clickElementSemantic("Send")
                         }
                     }
 
@@ -247,22 +247,22 @@ class ToolExecutor(
                     }
                 }
 
-                // 5. CLICK_ELEMENT
-                "click_element" -> {
+                // 5. CLICK_ELEMENT & CLICK
+                "click_element", "click" -> {
                     val target = args["target"] ?: args["text"] ?: ""
                     val service = SnowAccessibilityService.instance
                     if (service == null) {
                         return@withContext ToolExecutionResult(toolName, false, "Accessibility Service is not running.")
                     }
-                    val clicked = service.clickElement(target)
+                    val clicked = service.clickElementSemantic(target)
                     delay(300)
                     val summary = if (clicked) "Clicked '$target' successfully." else "Could not locate clickable element matching '$target'."
                     addLog(ActionLogEntry(actionType = "CLICK", targetOrDetails = target, isSuccess = clicked, verificationSummary = summary))
                     ToolExecutionResult(toolName, clicked, summary, verified = clicked)
                 }
 
-                // 6. LONG_CLICK_ELEMENT
-                "long_click_element" -> {
+                // 6. LONG_CLICK_ELEMENT & LONG_CLICK
+                "long_click_element", "long_click" -> {
                     val target = args["target"] ?: args["text"] ?: ""
                     val service = SnowAccessibilityService.instance
                     if (service == null) {
@@ -278,14 +278,14 @@ class ToolExecutor(
                 "type_text" -> {
                     val text = args["text"] ?: ""
                     val clearFirst = args["clear_first"]?.toBoolean() ?: false
+                    val targetHint = args["target"] ?: args["field"]
                     val service = SnowAccessibilityService.instance
                     if (service == null) {
                         return@withContext ToolExecutionResult(toolName, false, "Accessibility Service is not running.")
                     }
-                    val typed = service.typeText(text, clearFirst)
-                    val summary = if (typed) "Typed \"$text\" into active text field." else "No editable text field was found on screen."
-                    addLog(ActionLogEntry(actionType = "TYPE_TEXT", targetOrDetails = text, isSuccess = typed, verificationSummary = summary))
-                    ToolExecutionResult(toolName, typed, summary, verified = typed)
+                    val (typed, detail) = service.typeTextReliable(text, clearFirst, targetHint)
+                    addLog(ActionLogEntry(actionType = "TYPE_TEXT", targetOrDetails = text, isSuccess = typed, verificationSummary = detail))
+                    ToolExecutionResult(toolName, typed, detail, verified = typed)
                 }
 
                 // 8. CLEAR_TEXT
@@ -300,9 +300,13 @@ class ToolExecutor(
                     ToolExecutionResult(toolName, cleared, summary, verified = cleared)
                 }
 
-                // 9. SCROLL_SCREEN
-                "scroll_screen" -> {
-                    val direction = (args["direction"] ?: "DOWN").uppercase()
+                // 9. SCROLL_SCREEN, SCROLL_UP, SCROLL_DOWN
+                "scroll_screen", "scroll_up", "scroll_down" -> {
+                    val direction = when (toolName) {
+                        "scroll_up" -> "UP"
+                        "scroll_down" -> "DOWN"
+                        else -> (args["direction"] ?: "DOWN").uppercase()
+                    }
                     val service = SnowAccessibilityService.instance
                     if (service == null) {
                         return@withContext ToolExecutionResult(toolName, false, "Accessibility Service is not running.")
@@ -315,7 +319,7 @@ class ToolExecutor(
                 }
 
                 // 10. BACK & HOME
-                "press_back" -> {
+                "press_back", "back" -> {
                     val service = SnowAccessibilityService.instance
                     val ok = service?.pressBack() ?: false
                     val summary = if (ok) "Pressed Back." else "Accessibility Service not running."
@@ -323,13 +327,39 @@ class ToolExecutor(
                     ToolExecutionResult(toolName, ok, summary, verified = ok)
                 }
 
-                "press_home" -> {
+                "press_home", "home" -> {
                     val service = SnowAccessibilityService.instance
                     val ok = service?.pressHome() ?: false
                     val summary = if (ok) "Pressed Home." else "Accessibility Service not running."
                     addLog(ActionLogEntry(actionType = "HOME", targetOrDetails = "Global Action", isSuccess = ok, verificationSummary = summary))
                     ToolExecutionResult(toolName, ok, summary, verified = ok)
                 }
+
+                // FIND_TEXT & FIND_ELEMENT
+                "find_text" -> {
+                    val text = args["text"] ?: ""
+                    val service = SnowAccessibilityService.instance
+                    if (service == null) {
+                        return@withContext ToolExecutionResult(toolName, false, "Accessibility Service is not running.")
+                    }
+                    val node = service.findNodeByText(text)
+                    val found = node != null
+                    val summary = if (found) "Text '$text' is visible on screen." else "Text '$text' was not found on screen."
+                    ToolExecutionResult(toolName, found, summary, verified = found)
+                }
+
+                "find_element" -> {
+                    val target = args["target"] ?: ""
+                    val service = SnowAccessibilityService.instance
+                    if (service == null) {
+                        return@withContext ToolExecutionResult(toolName, false, "Accessibility Service is not running.")
+                    }
+                    val node = service.findNodeByText(target) ?: service.findNodeByContentDescription(target)
+                    val found = node != null
+                    val summary = if (found) "Found UI element '$target' on screen." else "Element '$target' not found."
+                    ToolExecutionResult(toolName, found, summary, verified = found)
+                }
+
 
                 // 11. SELECT_CONTACT
                 "select_contact" -> {
@@ -374,11 +404,17 @@ class ToolExecutor(
                     ToolExecutionResult(toolName, res.isSuccess, res.message, verified = res.isSuccess)
                 }
 
-                // 14. OPEN_FOLDER
+                // 14. OPEN_FOLDER & OPEN_FILE
                 "open_folder" -> {
                     val folderName = args["folder_name"] ?: "Snow"
                     val res = fileManagerHelper.openFolder(folderName)
                     addLog(ActionLogEntry(actionType = "OPEN_FOLDER", targetOrDetails = folderName, isSuccess = res.isSuccess, verificationSummary = res.message))
+                    ToolExecutionResult(toolName, res.isSuccess, res.message, verified = res.isSuccess)
+                }
+
+                "open_file" -> {
+                    val fileName = args["file_name"] ?: args["name"] ?: "test.txt"
+                    val res = fileManagerHelper.shareFile(fileName) // Or open in intent
                     ToolExecutionResult(toolName, res.isSuccess, res.message, verified = res.isSuccess)
                 }
 
@@ -390,15 +426,15 @@ class ToolExecutor(
                     ToolExecutionResult(toolName, res.isSuccess, res.message, verified = res.isSuccess)
                 }
 
-                // 16. WAIT_ACTION
-                "wait_action" -> {
+                // 16. WAIT_ACTION & WAIT
+                "wait_action", "wait" -> {
                     val ms = args["duration_ms"]?.toLongOrNull() ?: 1000L
                     delay(ms.coerceIn(100L, 5000L))
                     ToolExecutionResult(toolName, true, "Waited ${ms}ms.", verified = true)
                 }
 
-                // 17. VERIFY_ACTION
-                "verify_action" -> {
+                // 17. VERIFY_ACTION & VERIFY
+                "verify_action", "verify" -> {
                     val expected = args["expected_text_or_pkg"] ?: ""
                     val service = SnowAccessibilityService.instance
                     val ok = if (service != null) {
@@ -409,6 +445,30 @@ class ToolExecutor(
                     addLog(ActionLogEntry(actionType = "VERIFY_ACTION", targetOrDetails = expected, isSuccess = ok, verificationSummary = summary))
                     ToolExecutionResult(toolName, ok, summary, verified = ok)
                 }
+
+                // SEND_MESSAGE (Generic WhatsApp or SMS)
+                "send_message" -> {
+                    val platform = args["platform"]?.lowercase() ?: "whatsapp"
+                    if (platform.contains("sms")) {
+                        val recipient = args["recipient"] ?: ""
+                        val message = args["message"] ?: ""
+                        val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
+                            data = Uri.parse("smsto:$recipient")
+                            putExtra("sms_body", message)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        try {
+                            context.startActivity(smsIntent)
+                            ToolExecutionResult(toolName, true, "Opened SMS for $recipient.", verified = true)
+                        } catch (e: Exception) {
+                            ToolExecutionResult(toolName, false, "Failed to launch SMS: ${e.message}")
+                        }
+                    } else {
+                        // Forward to whatsapp
+                        executeTool("send_whatsapp", args)
+                    }
+                }
+
 
                 // 18. WEB SEARCH
                 "web_search" -> {

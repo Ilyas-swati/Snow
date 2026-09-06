@@ -24,6 +24,25 @@ class OpenAIAIProvider(
     override val displayName: String = "OpenAI (GPT-4o / Compatible)"
     override val requiresApiKey: Boolean = true
 
+    override fun getCapabilities(modelName: String): Set<ModelCapability> {
+        val lower = modelName.lowercase()
+        val caps = mutableSetOf(ModelCapability.TEXT, ModelCapability.TOOL_CALLING, ModelCapability.CODE)
+        if (lower.contains("4o") || lower.contains("vision")) {
+            caps.add(ModelCapability.VISION)
+        }
+        if (lower.contains("o1") || lower.contains("o3")) {
+            caps.add(ModelCapability.REASONING)
+        }
+        return caps
+    }
+
+    override suspend fun listAvailableModels(): List<ModelInfo> = listOf(
+        ModelInfo("gpt-4o", "GPT-4o", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "High-intelligence flagship model"),
+        ModelInfo("gpt-4o-mini", "GPT-4o Mini", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "Fast and affordable multimodal model"),
+        ModelInfo("o3-mini", "o3-mini", setOf(ModelCapability.TEXT, ModelCapability.REASONING, ModelCapability.CODE, ModelCapability.TOOL_CALLING), "Specialized STEM & reasoning model"),
+        ModelInfo("gpt-4-turbo", "GPT-4 Turbo", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING), "Previous generation flagship")
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)

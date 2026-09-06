@@ -149,7 +149,7 @@ class SnowAccessibilityService : AccessibilityService() {
         val targetInput = if (inputNodes.isNotEmpty()) {
             inputNodes[0]
         } else {
-            findFirstEditableNode(root)
+            findEditableNode(root)
         }
 
         if (targetInput != null) {
@@ -167,157 +167,195 @@ class SnowAccessibilityService : AccessibilityService() {
                     sendNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     addLog("Clicked WhatsApp send button via ID.")
                 } else {
-                    clickNodeWithTextOrDesc(root, "Send")
+                    clickElementSemantic("Send")
                 }
             }
         }
     }
 
     // -------------------------------------------------------------
-    // SCREEN UNDERSTANDING (LEVEL A - ACCESSIBILITY TREE)
+    // SCREEN UNDERSTANDING (ScreenObserver integration)
     // -------------------------------------------------------------
-    fun captureScreenSnapshot(): ScreenSnapshot {
-        val root = rootInActiveWindow
-        val elements = mutableListOf<UIElement>()
-        val texts = mutableListOf<String>()
-
-        if (root != null) {
-            traverseNodeHierarchy(root, elements, texts)
-        }
-
-        return ScreenSnapshot(
-            packageName = currentForegroundPackage,
-            elements = elements,
-            readableTexts = texts.distinct()
+    fun captureScreenState(): ScreenState {
+        return ScreenObserver.captureScreenState(
+            rootNode = rootInActiveWindow,
+            currentPackage = currentForegroundPackage
         )
     }
 
-    private fun traverseNodeHierarchy(
-        node: AccessibilityNodeInfo,
-        elements: MutableList<UIElement>,
-        texts: MutableList<String>
-    ) {
-        val textStr = node.text?.toString()?.trim()
-        val descStr = node.contentDescription?.toString()?.trim()
-        val bounds = Rect()
-        node.getBoundsInScreen(bounds)
-
-        if (!textStr.isNullOrBlank()) {
-            texts.add(textStr)
-        } else if (!descStr.isNullOrBlank()) {
-            texts.add(descStr)
-        }
-
-        if (node.isClickable || node.isEditable || node.isScrollable || !textStr.isNullOrBlank() || !descStr.isNullOrBlank()) {
-            elements.add(
-                UIElement(
-                    text = textStr,
-                    contentDescription = descStr,
-                    viewId = node.viewIdResourceName,
-                    className = node.className?.toString(),
-                    isClickable = node.isClickable,
-                    isEditable = node.isEditable,
-                    isScrollable = node.isScrollable,
-                    bounds = bounds
-                )
+    fun captureScreenSnapshot(): ScreenSnapshot {
+        val state = captureScreenState()
+        val elements = state.allNodes.map {
+            UIElement(
+                text = it.text,
+                contentDescription = it.contentDescription,
+                viewId = it.viewId,
+                className = it.className,
+                isClickable = it.isClickable,
+                isEditable = it.isEditable,
+                isScrollable = it.isScrollable,
+                bounds = it.bounds
             )
         }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            traverseNodeHierarchy(child, elements, texts)
-        }
+        return ScreenSnapshot(
+            packageName = currentForegroundPackage,
+            elements = elements,
+            readableTexts = state.visibleTexts
+        )
     }
 
     fun getVisibleScreenText(): String {
-        val snapshot = captureScreenSnapshot()
-        return snapshot.toFormattedString()
+        return captureScreenState().toCompactRepresentation()
     }
 
     // -------------------------------------------------------------
-    // NODE SEARCH & INTERACTION
+    // NODE SEARCH & INTERACTION (RELIABLE SEMANTIC APIS)
     // -------------------------------------------------------------
-    fun findFirstEditableNode(node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
-        if (node == null) return null
-        if (node.isEditable || node.className == "android.widget.EditText") return node
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findFirstEditableNode(child)
-            if (found != null) return found
-        }
-        return null
+    fun findEditableNode(node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
+        return ScreenObserver.findEditableNode(node)
+    }
+
+    fun findFocusedEditableNode(node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
+        return ScreenObserver.findFocusedEditableNode(node)
+    }
+
+    fun findTextField(node: AccessibilityNodeInfo? = rootInActiveWindow, hintOrLabel: String? = null): AccessibilityNodeInfo? {
+        return ScreenObserver.findTextField(node, hintOrLabel)
     }
 
     fun findNodeByText(text: String, node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
-        if (node == null) return null
-        if (node.text?.toString()?.contains(text, ignoreCase = true) == true ||
-            node.contentDescription?.toString()?.contains(text, ignoreCase = true) == true
-        ) {
-            return node
-        }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findNodeByText(text, child)
-            if (found != null) return found
-        }
-        return null
+        return ScreenObserver.findNodeByText(node, text)
     }
 
-    fun findNodeByViewId(viewId: String): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        val nodes = root.findAccessibilityNodeInfosByViewId(viewId)
-        return nodes.firstOrNull()
+    fun findNodeByContentDescription(desc: String, node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
+        return ScreenObserver.findNodeByContentDescription(node, desc)
     }
 
-    fun clickNodeWithTextOrDesc(node: AccessibilityNodeInfo? = rootInActiveWindow, query: String): Boolean {
-        if (node == null) return false
-        val matches = (node.text?.toString()?.contains(query, ignoreCase = true) == true) ||
-                (node.contentDescription?.toString()?.contains(query, ignoreCase = true) == true)
+    fun findClickableParent(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        return ScreenObserver.findClickableParent(node)
+    }
 
-        if (matches) {
-            var clickableNode: AccessibilityNodeInfo? = node
-            while (clickableNode != null && !clickableNode.isClickable) {
-                clickableNode = clickableNode.parent
+    fun findScrollableNode(node: AccessibilityNodeInfo? = rootInActiveWindow): AccessibilityNodeInfo? {
+        return ScreenObserver.findScrollableNode(node)
+    }
+
+    fun focusTextField(node: AccessibilityNodeInfo): Boolean {
+        return ScreenObserver.focusTextField(node)
+    }
+
+    fun clearText(node: AccessibilityNodeInfo): Boolean {
+        return ScreenObserver.clearText(node)
+    }
+
+    fun setText(node: AccessibilityNodeInfo, text: String): Boolean {
+        return ScreenObserver.setText(node, text)
+    }
+
+    fun verifyText(node: AccessibilityNodeInfo, expectedText: String): Boolean {
+        return ScreenObserver.verifyText(node, expectedText)
+    }
+
+    /**
+     * Reliable text typing with verification and retry mechanisms.
+     */
+    suspend fun typeTextReliable(
+        text: String,
+        clearFirst: Boolean = false,
+        fieldHint: String? = null
+    ): Pair<Boolean, String> {
+        val root = rootInActiveWindow ?: return Pair(false, "No active window found.")
+        val targetNode = findTextField(root, fieldHint) ?: return Pair(false, "No editable input field found on screen.")
+
+        try {
+            focusTextField(targetNode)
+            if (clearFirst) {
+                clearText(targetNode)
+                delay(100)
             }
-            if (clickableNode != null && clickableNode.isClickable) {
-                val ok = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                if (ok) {
-                    addLog("Clicked node matching '$query'")
-                    return true
+
+            // Attempt 1: Direct ACTION_SET_TEXT
+            var success = setText(targetNode, text)
+            delay(150)
+
+            // Verification check: re-query active window to confirm text was actually set
+            val updatedRoot = rootInActiveWindow
+            val updatedField = findTextField(updatedRoot, fieldHint)
+            var isVerified = updatedField != null && verifyText(updatedField, text)
+
+            if (!isVerified) {
+                // Attempt 2: Click field coordinates first to open keyboard / gain focus, then set text
+                val rect = Rect()
+                targetNode.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) {
+                    clickCoordinates(rect.centerX().toFloat(), rect.centerY().toFloat())
+                    delay(300)
+                    val retryRoot = rootInActiveWindow
+                    val retryField = findTextField(retryRoot, fieldHint)
+                    if (retryField != null) {
+                        setText(retryField, text)
+                        delay(150)
+                        val finalRoot = rootInActiveWindow
+                        val finalField = findTextField(finalRoot, fieldHint)
+                        isVerified = finalField != null && verifyText(finalField, text)
+                    }
                 }
             }
-        }
 
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            if (clickNodeWithTextOrDesc(child, query)) return true
+            return if (isVerified) {
+                addLog("Verified text input successfully into field: \"$text\"")
+                Pair(true, "Successfully typed and verified text \"$text\".")
+            } else if (success) {
+                addLog("Typed text via ACTION_SET_TEXT, but could not visually verify.")
+                Pair(true, "Typed text \"$text\" into field.")
+            } else {
+                Pair(false, "Failed to set text into input field.")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error typing text", e)
+            return Pair(false, "Error typing text: ${e.localizedMessage ?: e.message}")
         }
-        return false
     }
 
-    fun clickElement(targetQuery: String): Boolean {
+    fun clickElementSemantic(targetQuery: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        // 1. Try direct text / contentDescription click
-        if (clickNodeWithTextOrDesc(root, targetQuery)) {
-            return true
-        }
 
-        // 2. Try by viewId
-        val idNodes = root.findAccessibilityNodeInfosByViewId(targetQuery)
-        if (idNodes.isNotEmpty()) {
-            val n = idNodes[0]
-            if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                addLog("Clicked node by viewId '$targetQuery'")
+        // 1. Exact or partial semantic search by text
+        val textMatch = findNodeByText(targetQuery, root)
+        if (textMatch != null) {
+            val clickable = findClickableParent(textMatch)
+            if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                addLog("Clicked semantic match for '$targetQuery'")
                 return true
             }
         }
 
-        // 3. Fallback: find node and click at center coordinates using GestureDescription
-        val node = findNodeByText(targetQuery, root)
-        if (node != null) {
+        // 2. Semantic search by content description
+        val descMatch = findNodeByContentDescription(targetQuery, root)
+        if (descMatch != null) {
+            val clickable = findClickableParent(descMatch)
+            if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                addLog("Clicked content description match for '$targetQuery'")
+                return true
+            }
+        }
+
+        // 3. Search by View Resource ID
+        val idNodes = root.findAccessibilityNodeInfosByViewId(targetQuery)
+        if (idNodes.isNotEmpty()) {
+            val clickable = findClickableParent(idNodes[0])
+            if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                addLog("Clicked viewId match for '$targetQuery'")
+                return true
+            }
+        }
+
+        // 4. Coordinates tap fallback (only if semantic node was found but not clickable)
+        val fallbackNode = textMatch ?: descMatch
+        if (fallbackNode != null) {
             val rect = Rect()
-            node.getBoundsInScreen(rect)
+            fallbackNode.getBoundsInScreen(rect)
             if (rect.width() > 0 && rect.height() > 0) {
+                addLog("Tapping center coordinates of '$targetQuery' at (${rect.centerX()}, ${rect.centerY()})")
                 return clickCoordinates(rect.centerX().toFloat(), rect.centerY().toFloat())
             }
         }
@@ -339,7 +377,7 @@ class SnowAccessibilityService : AccessibilityService() {
 
     fun typeText(text: String, clearFirst: Boolean = false): Boolean {
         val root = rootInActiveWindow ?: return false
-        val inputNode = findFirstEditableNode(root) ?: return false
+        val inputNode = findEditableNode(root) ?: return false
 
         inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
@@ -362,7 +400,7 @@ class SnowAccessibilityService : AccessibilityService() {
 
     fun clearActiveText(): Boolean {
         val root = rootInActiveWindow ?: return false
-        val inputNode = findFirstEditableNode(root) ?: return false
+        val inputNode = findEditableNode(root) ?: return false
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
         }
@@ -387,16 +425,6 @@ class SnowAccessibilityService : AccessibilityService() {
         val startY = if (forward) height * 0.7f else height * 0.3f
         val endY = if (forward) height * 0.3f else height * 0.7f
         return swipe(width * 0.5f, startY, width * 0.5f, endY, 300)
-    }
-
-    private fun findScrollableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isScrollable) return node
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findScrollableNode(child)
-            if (found != null) return found
-        }
-        return null
     }
 
     fun pressBack(): Boolean {

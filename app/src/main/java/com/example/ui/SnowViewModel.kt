@@ -188,9 +188,27 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _isSetupDismissed = MutableStateFlow(false)
+    val isSetupDismissed: StateFlow<Boolean> = _isSetupDismissed.asStateFlow()
+
+    fun dismissSetupCard() {
+        _isSetupDismissed.value = true
+    }
+
+    fun reopenSetupCard() {
+        _isSetupDismissed.value = false
+    }
+
+    fun clearChatHistory() {
+        viewModelScope.launch {
+            database.chatDao().clearAll()
+        }
+    }
+
     fun interruptCurrentTask(reason: String = "Stop / Interrupt requested") {
         activeConversationJob?.cancel()
         activeConversationJob = null
+        com.example.agent.TaskManager.cancelCurrentTask(reason)
         agentManager.cancelCurrentTask()
         voiceEngine.stopSpeaking()
         _isProcessingPrompt.value = false
@@ -216,10 +234,12 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
         if (VoiceEngine.isInterruptionWord(cleanText)) {
             activeConversationJob?.cancel()
             activeConversationJob = null
+            com.example.agent.TaskManager.cancelCurrentTask("User requested stop: $cleanText")
             agentManager.cancelCurrentTask()
             voiceEngine.stopSpeaking()
             _isProcessingPrompt.value = false
             _conversationState.value = ConversationState.INTERRUPTED
+
 
             val ackText = when (preferences.languageMode) {
                 SnowPreferences.LANG_UR -> "ٹھیک ہے جانو، رک گئی۔ ❤️"

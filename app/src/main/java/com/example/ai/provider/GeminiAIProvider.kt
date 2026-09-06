@@ -22,6 +22,21 @@ class GeminiAIProvider : AIProvider {
     override val displayName: String = "Google Gemini"
     override val requiresApiKey: Boolean = true
 
+    override fun getCapabilities(modelName: String): Set<ModelCapability> = setOf(
+        ModelCapability.TEXT,
+        ModelCapability.VISION,
+        ModelCapability.TOOL_CALLING,
+        ModelCapability.CODE,
+        ModelCapability.REASONING
+    )
+
+    override suspend fun listAvailableModels(): List<ModelInfo> = listOf(
+        ModelInfo("gemini-2.5-flash", "Gemini 2.5 Flash", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "Fast and versatile multimodal model"),
+        ModelInfo("gemini-flash-latest", "Gemini Flash (Latest)", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE), "Optimized for speed and high throughput"),
+        ModelInfo("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING), "Lightweight and fast"),
+        ModelInfo("gemini-3.1-pro-preview", "Gemini 3.1 Pro", setOf(ModelCapability.TEXT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.REASONING, ModelCapability.CODE), "Advanced reasoning and coding")
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(25, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)

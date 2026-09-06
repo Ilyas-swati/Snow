@@ -64,16 +64,22 @@ class VoiceEngine(
     companion object {
         val INTERRUPT_COMMANDS = listOf(
             "ruko", "ruk jao", "stop", "bas", "chup", "wait", "sun meri baat",
-            "ek minute", "cancel", "cancel it", "khamosh", "thehro", "rukna"
+            "ek minute", "cancel", "cancel it", "khamosh", "thehro", "rukna",
+            "shh", "quiet", "shut up", "hold on", "hold on a second",
+            // Urdu script
+            "روکو", "رک جاؤ", "بس", "چپ", "سٹاپ", "ایک منٹ", "خاموش", "ٹھہرو", "رکنا", "کینسل",
+            // Hindi / Devanagari script
+            "रुको", "रुक जाओ", "बस", "चुप", "स्टॉप", "एक मिनट", "खामोश", "ठहरो", "रुकना", "कैंसिल"
         )
 
         fun isInterruptionWord(text: String): Boolean {
             val clean = text.trim().lowercase()
-            return INTERRUPT_COMMANDS.any {
-                clean == it || clean.startsWith("$it ") || clean.contains(it)
+            return INTERRUPT_COMMANDS.any { cmd ->
+                clean == cmd || clean.startsWith("$cmd ") || clean.endsWith(" $cmd") || clean.contains(" $cmd ")
             }
         }
     }
+
 
     val ttsProviderManager = TTSProviderManager(
         context = context,
@@ -357,12 +363,12 @@ class VoiceEngine(
     }
 
     override fun onBeginningOfSpeech() {
-        // Interruption handling: User started speaking while AI was speaking
-        if (isSpeaking && preferences.interruptWhileSpeaking) {
-            stopSpeaking()
-            onInterruptionRequested?.invoke("User voice detected")
+        // Do NOT abruptly terminate TTS playback here on mic audio detection.
+        // Android SpeechRecognizer will hear acoustic speaker output from TTS, which
+        // would cause false positive cutoff. Only real interruption words or manual stop will cut off speech.
+        if (!isSpeaking) {
+            _voiceState.value = VoiceState.LISTENING
         }
-        _voiceState.value = VoiceState.LISTENING
     }
 
     override fun onRmsChanged(rmsdB: Float) {
@@ -387,7 +393,7 @@ class VoiceEngine(
                     startListening()
                 }
             }, 500)
-        } else {
+        } else if (!isSpeaking) {
             _voiceState.value = VoiceState.IDLE
         }
     }
@@ -401,10 +407,18 @@ class VoiceEngine(
 
         if (recognizedText.isNotBlank()) {
             if (isSpeaking && preferences.interruptWhileSpeaking) {
-                stopSpeaking()
-                onInterruptionRequested?.invoke(recognizedText)
+                if (isInterruptionWord(recognizedText)) {
+                    Log.i("VoiceEngine", "Barge-in command verified in onResults: '$recognizedText'")
+                    stopSpeaking()
+                    _voiceState.value = VoiceState.LISTENING
+                    onInterruptionRequested?.invoke(recognizedText)
+                    return
+                }
             }
+
             if (isInterruptionWord(recognizedText)) {
+                stopSpeaking()
+                _voiceState.value = VoiceState.LISTENING
                 onVoiceInputRecognized(recognizedText, true)
             } else {
                 checkWakeWordAndDispatch(recognizedText, isFinal = true)
@@ -424,8 +438,11 @@ class VoiceEngine(
         if (text.isNotBlank()) {
             _partialTranscript.value = text
             if (isSpeaking && preferences.interruptWhileSpeaking) {
-                if (isInterruptionWord(text) || text.trim().length >= 4) {
+                // Only interrupt if an actual interruption keyword is recognized
+                if (isInterruptionWord(text)) {
+                    Log.i("VoiceEngine", "Barge-in keyword verified in onPartialResults: '$text'")
                     stopSpeaking()
+                    _voiceState.value = VoiceState.LISTENING
                     onInterruptionRequested?.invoke(text)
                 }
             }
@@ -435,6 +452,7 @@ class VoiceEngine(
             }
         }
     }
+
 
     override fun onEvent(eventType: Int, params: Bundle?) {}
 

@@ -36,6 +36,25 @@ class AIProviderManager(private val preferences: SnowPreferences) {
         return getProvider(fallbackId)
     }
 
+    fun getActiveModelCapabilities(): Set<ModelCapability> {
+        val primary = getActiveProvider()
+        val model = getModelFor(primary)
+        return primary.getCapabilities(model)
+    }
+
+    fun isVisionSupported(): Boolean {
+        return getActiveModelCapabilities().contains(ModelCapability.VISION)
+    }
+
+    suspend fun listModelsForProvider(providerId: String): List<ModelInfo> {
+        val prov = getProvider(providerId)
+        return prov.listAvailableModels()
+    }
+
+    suspend fun listActiveProviderModels(): List<ModelInfo> {
+        return getActiveProvider().listAvailableModels()
+    }
+
     private fun getApiKeyFor(provider: AIProvider): String {
         return when (provider.id) {
             "GEMINI" -> preferences.effectiveApiKey
