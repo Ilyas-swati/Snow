@@ -200,15 +200,26 @@ class VoiceEngine(
             return
         }
 
+        // Strict speech filtering: never speak code, JSON, file contents, or tool calls
+        val cleanSpokenText = SpeechTextFilter.filterForSpeech(text, language)
+        if (cleanSpokenText.isBlank()) {
+            Log.d("VoiceEngine", "Spoken text was blank or filtered out completely; skipping TTS")
+            _voiceState.value = VoiceState.IDLE
+            if (isContinuousListeningRequested && preferences.continuousListening) {
+                mainHandler.postDelayed({ startListening() }, 400)
+            }
+            return
+        }
+
         // Stop current listening to avoid audio feedback
         stopListeningInternal()
 
         coroutineScope.launch {
             ttsProviderManager.synthesizeAndPlay(
-                text = text,
+                text = cleanSpokenText,
                 language = language,
                 onSystemTtsRequested = {
-                    speakWithSystemTts(text, language)
+                    speakWithSystemTts(cleanSpokenText, language)
                 }
             )
         }
@@ -406,14 +417,18 @@ class VoiceEngine(
         _partialTranscript.value = ""
 
         if (recognizedText.isNotBlank()) {
-            if (isSpeaking && preferences.interruptWhileSpeaking) {
-                if (isInterruptionWord(recognizedText)) {
+            if (isSpeaking) {
+                // When speaking, ONLY genuine interruption commands are honored
+                if (preferences.interruptWhileSpeaking && isInterruptionWord(recognizedText)) {
                     Log.i("VoiceEngine", "Barge-in command verified in onResults: '$recognizedText'")
                     stopSpeaking()
                     _voiceState.value = VoiceState.LISTENING
                     onInterruptionRequested?.invoke(recognizedText)
-                    return
+                } else {
+                    // Suppress microphone input caused by Snow's own voice during TTS playback
+                    Log.d("VoiceEngine", "Suppressed recognized speech during TTS playback: $recognizedText")
                 }
+                return
             }
 
             if (isInterruptionWord(recognizedText)) {
@@ -437,14 +452,15 @@ class VoiceEngine(
         val text = matches?.firstOrNull() ?: ""
         if (text.isNotBlank()) {
             _partialTranscript.value = text
-            if (isSpeaking && preferences.interruptWhileSpeaking) {
-                // Only interrupt if an actual interruption keyword is recognized
-                if (isInterruptionWord(text)) {
+            if (isSpeaking) {
+                // When speaking, ONLY check for real barge-in stop words; never trigger wake word on TTS
+                if (preferences.interruptWhileSpeaking && isInterruptionWord(text)) {
                     Log.i("VoiceEngine", "Barge-in keyword verified in onPartialResults: '$text'")
                     stopSpeaking()
                     _voiceState.value = VoiceState.LISTENING
                     onInterruptionRequested?.invoke(text)
                 }
+                return
             }
             // Check wake word in real-time
             if (checkWakeWord(text)) {

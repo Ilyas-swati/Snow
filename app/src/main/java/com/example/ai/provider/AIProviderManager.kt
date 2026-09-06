@@ -158,7 +158,11 @@ class AIProviderManager(private val preferences: SnowPreferences) {
         val provider = getProvider(providerId)
         val key = getApiKeyFor(provider)
         val model = getModelFor(provider)
-        val customEndpoint = if (provider.id == "CUSTOM_REST") preferences.customRestEndpoint else ""
+        val customEndpoint = when (provider.id) {
+            "CUSTOM_REST" -> preferences.customRestEndpoint
+            "OLLAMA" -> preferences.ollamaBaseUrl
+            else -> ""
+        }
         return provider.testConnection(key, model, customEndpoint)
     }
 }

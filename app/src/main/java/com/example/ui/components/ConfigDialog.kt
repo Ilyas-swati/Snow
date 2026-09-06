@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,10 +31,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
@@ -130,8 +133,12 @@ fun ConfigDialog(
     var ollamaBaseUrl by remember { mutableStateOf(preferences.ollamaBaseUrl) }
     var ollamaModel by remember { mutableStateOf(preferences.ollamaModel) }
     var ollamaApiKey by remember { mutableStateOf(preferences.ollamaApiKey) }
-    var ollamaDiscoveredModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showOllamaApiKey by remember { mutableStateOf(false) }
+    var ollamaDiscoveredModels by remember { mutableStateOf<List<com.example.ai.provider.OllamaModelInfo>>(emptyList()) }
     var isFetchingOllamaModels by remember { mutableStateOf(false) }
+    var isTestingOllamaConnection by remember { mutableStateOf(false) }
+    var ollamaConnectionResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var ollamaModelSearchQuery by remember { mutableStateOf("") }
     var speakTypedResponses by remember { mutableStateOf(preferences.speakTypedResponses) }
 
     // Image Generation (Req 29)
@@ -409,13 +416,16 @@ fun ConfigDialog(
                             }
 
                             SnowPreferences.PROVIDER_OLLAMA -> {
-                                Text("Ollama Base URL", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
-                                Text("Reach your local Ollama server (e.g. on your LAN or host machine)", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                Text("Ollama Server URL", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
+                                Text("Enter the reachable address of your Ollama server (e.g. on your local Wi-Fi or host machine)", fontSize = 11.sp, color = Color(0xFF94A3B8))
                                 OutlinedTextField(
                                     value = ollamaBaseUrl,
-                                    onValueChange = { ollamaBaseUrl = it },
+                                    onValueChange = { 
+                                        ollamaBaseUrl = it 
+                                        ollamaConnectionResult = null
+                                    },
                                     modifier = Modifier.fillMaxWidth().testTag("ollama_url_field"),
-                                    placeholder = { Text("http://10.0.2.2:11434 or http://192.168.1.50:11434", fontSize = 12.sp) },
+                                    placeholder = { Text("http://192.168.1.100:11434 or http://10.0.2.2:11434", fontSize = 12.sp) },
                                     singleLine = true
                                 )
                                 Row(
@@ -423,77 +433,251 @@ fun ConfigDialog(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     OutlinedButton(
-                                        onClick = { ollamaBaseUrl = "http://10.0.2.2:11434" },
+                                        onClick = { 
+                                            ollamaBaseUrl = "http://10.0.2.2:11434"
+                                            ollamaConnectionResult = null
+                                        },
                                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
-                                        Text("Host Emulator (10.0.2.2)", fontSize = 10.sp)
+                                        Text("Host Machine (10.0.2.2)", fontSize = 10.sp)
                                     }
                                     OutlinedButton(
-                                        onClick = { ollamaBaseUrl = "http://127.0.0.1:11434" },
+                                        onClick = { 
+                                            ollamaBaseUrl = "http://127.0.0.1:11434"
+                                            ollamaConnectionResult = null
+                                        },
                                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
-                                        Text("Localhost (127.0.0.1)", fontSize = 10.sp)
+                                        Text("On-Device (127.0.0.1)", fontSize = 10.sp)
                                     }
                                 }
+
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Text("Model Name", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
+                                Text("API Key / Token (Optional)", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
+                                Text("Optional authentication for remote or reverse-proxied Ollama endpoints", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                OutlinedTextField(
+                                    value = ollamaApiKey,
+                                    onValueChange = { 
+                                        ollamaApiKey = it
+                                        ollamaConnectionResult = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth().testTag("ollama_api_key_field"),
+                                    placeholder = { Text("Leave blank for local Ollama without auth", fontSize = 12.sp) },
+                                    singleLine = true,
+                                    visualTransformation = if (showOllamaApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                                    trailingIcon = {
+                                        IconButton(onClick = { showOllamaApiKey = !showOllamaApiKey }) {
+                                            Icon(
+                                                imageVector = if (showOllamaApiKey) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                contentDescription = if (showOllamaApiKey) "Hide API Key" else "Show API Key",
+                                                tint = Color(0xFF94A3B8)
+                                            )
+                                        }
+                                    }
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                isTestingOllamaConnection = true
+                                                ollamaConnectionResult = null
+                                                val provider = com.example.ai.provider.OllamaAIProvider({ ollamaBaseUrl }, { ollamaApiKey })
+                                                val res = provider.testConnection(ollamaApiKey, ollamaModel, ollamaBaseUrl)
+                                                ollamaConnectionResult = Pair(res.isSuccess, res.message)
+                                                if (res.isSuccess) {
+                                                    val models = com.example.ai.provider.OllamaAIProvider.fetchDetailedModels(ollamaBaseUrl, ollamaApiKey)
+                                                    ollamaDiscoveredModels = models
+                                                }
+                                                isTestingOllamaConnection = false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).testTag("ollama_test_connection_button"),
+                                        enabled = !isTestingOllamaConnection && !isFetchingOllamaModels
+                                    ) {
+                                        if (isTestingOllamaConnection) {
+                                            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Testing...", fontSize = 11.sp)
+                                        } else {
+                                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Test Connection", fontSize = 11.sp)
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                isFetchingOllamaModels = true
+                                                val fetched = com.example.ai.provider.OllamaAIProvider.fetchDetailedModels(ollamaBaseUrl, ollamaApiKey)
+                                                ollamaDiscoveredModels = fetched
+                                                isFetchingOllamaModels = false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).testTag("ollama_refresh_models_button"),
+                                        enabled = !isFetchingOllamaModels && !isTestingOllamaConnection
+                                    ) {
+                                        if (isFetchingOllamaModels) {
+                                            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Fetching...", fontSize = 11.sp)
+                                        } else {
+                                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Refresh Models", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+
+                                // Connection diagnostic banner
+                                ollamaConnectionResult?.let { (success, message) ->
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (success) Color(0xFF064E3B).copy(alpha = 0.5f) else Color(0xFF7F1D1D).copy(alpha = 0.5f)
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = if (success) Icons.Default.CheckCircle else Icons.Default.Error,
+                                                contentDescription = null,
+                                                tint = if (success) Color(0xFF34D399) else Color(0xFFF87171),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(message, fontSize = 11.sp, color = if (success) Color(0xFFD1FAE5) else Color(0xFFFEE2E2))
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Selected Model", style = MaterialTheme.typography.labelMedium, color = Color(0xFF00E5FF))
                                 OutlinedTextField(
                                     value = ollamaModel,
                                     onValueChange = { ollamaModel = it },
                                     modifier = Modifier.fillMaxWidth().testTag("ollama_model_field"),
-                                    placeholder = { Text("llama3.2:3b, qwen2.5:7b, mistral, llava", fontSize = 12.sp) },
+                                    placeholder = { Text("Enter or select model from server", fontSize = 12.sp) },
                                     singleLine = true
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Popular Models:", fontSize = 11.sp, color = Color(0xFF94A3B8))
-                                @OptIn(ExperimentalLayoutApi::class)
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    listOf("llama3.2:3b", "qwen2.5:7b", "mistral:latest", "llava:7b", "gemma2:9b").forEach { m ->
-                                        FilterChip(
-                                            selected = ollamaModel == m,
-                                            onClick = { ollamaModel = m },
-                                            label = { Text(m, fontSize = 11.sp) }
-                                        )
-                                    }
-                                }
 
+                                // Dynamic Searchable Models List from Ollama GET /api/tags
                                 if (ollamaDiscoveredModels.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text("Installed on Server:", fontSize = 11.sp, color = Color(0xFF00E5FF))
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        ollamaDiscoveredModels.forEach { m ->
-                                            FilterChip(
-                                                selected = ollamaModel == m,
-                                                onClick = { ollamaModel = m },
-                                                label = { Text(m, fontSize = 11.sp) }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Installed Models on Server (${ollamaDiscoveredModels.size}):", fontSize = 11.sp, color = Color(0xFF00E5FF))
+
+                                    OutlinedTextField(
+                                        value = ollamaModelSearchQuery,
+                                        onValueChange = { ollamaModelSearchQuery = it },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("ollama_model_search_field"),
+                                        placeholder = { Text("Filter models (e.g. 7b, vision, coder, r1)...", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF94A3B8))
+                                        }
+                                    )
+
+                                    val filteredModels = remember(ollamaDiscoveredModels, ollamaModelSearchQuery) {
+                                        if (ollamaModelSearchQuery.isBlank()) {
+                                            ollamaDiscoveredModels
+                                        } else {
+                                            val query = ollamaModelSearchQuery.trim().lowercase()
+                                            ollamaDiscoveredModels.filter {
+                                                it.name.lowercase().contains(query) ||
+                                                it.parameterSize.lowercase().contains(query) ||
+                                                (query == "vision" && it.supportsVision) ||
+                                                (query == "code" && it.supportsCode) ||
+                                                (query == "reasoning" && it.supportsReasoning)
+                                            }
+                                        }
+                                    }
+
+                                    Text(
+                                        "Showing ${filteredModels.size} of ${ollamaDiscoveredModels.size} models:",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF94A3B8)
+                                    )
+
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 220.dp)
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(top = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        filteredModels.forEach { m ->
+                                            val isSelected = ollamaModel.equals(m.name, ignoreCase = true)
+                                            Card(
+                                                onClick = { ollamaModel = m.name },
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.18f) else Color(0xFF1E293B).copy(alpha = 0.6f)
+                                                ),
+                                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF)) else null,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = m.name,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                            color = if (isSelected) Color(0xFF00E5FF) else Color.White
+                                                        )
+                                                        if (m.formattedSize.isNotBlank()) {
+                                                            Text(
+                                                                text = "${if (m.parameterSize.isNotBlank()) "${m.parameterSize} • " else ""}${m.formattedSize}",
+                                                                fontSize = 10.sp,
+                                                                color = Color(0xFF94A3B8)
+                                                            )
+                                                        }
+                                                    }
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                        modifier = Modifier.padding(top = 2.dp)
+                                                    ) {
+                                                        Text("• Text", fontSize = 9.sp, color = Color(0xFF38BDF8))
+                                                        if (m.supportsVision) {
+                                                            Text("• Vision", fontSize = 9.sp, color = Color(0xFF34D399))
+                                                        }
+                                                        if (m.supportsCode) {
+                                                            Text("• Code", fontSize = 9.sp, color = Color(0xFFFBBF24))
+                                                        }
+                                                        if (m.supportsReasoning) {
+                                                            Text("• Reasoning", fontSize = 9.sp, color = Color(0xFFA78BFA))
+                                                        }
+                                                        if (m.supportsTools) {
+                                                            Text("• Tools", fontSize = 9.sp, color = Color(0xFF2DD4BF))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (filteredModels.isEmpty()) {
+                                            Text(
+                                                "No models match \"$ollamaModelSearchQuery\"",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF94A3B8),
+                                                modifier = Modifier.padding(8.dp)
                                             )
                                         }
                                     }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            isFetchingOllamaModels = true
-                                            val fetched = com.example.ai.provider.OllamaAIProvider.fetchInstalledModels(ollamaBaseUrl, ollamaApiKey)
-                                            ollamaDiscoveredModels = fetched
-                                            isFetchingOllamaModels = false
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = !isFetchingOllamaModels
-                                ) {
-                                    if (isFetchingOllamaModels) {
-                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Querying Ollama...", fontSize = 11.sp)
-                                    } else {
-                                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Fetch Installed Models from Server", fontSize = 12.sp)
-                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "Tap 'Refresh Models' or 'Test Connection' to discover all models installed on your Ollama server.",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF94A3B8)
+                                    )
                                 }
                             }
 

@@ -215,5 +215,114 @@ class ExampleUnitTest {
         assertEquals("Note created: Buy groceries", completedSteps[0])
         assertFalse("Step 2 must not have executed", completedSteps.contains("Reminder set for 5 PM"))
     }
+
+    // ==========================================
+    // CRITICAL BUG FIX TESTS: TEXT/SPEECH SEPARATION
+    // ==========================================
+
+    @Test
+    fun testSpeechTextFilter_stripsCodeBlocks() {
+        val aiResponse = """
+            Yeh raha aapka Kotlin code:
+            ```kotlin
+            fun main() {
+                println("Hello Snow")
+            }
+            ```
+            Aap isko run kar sakte hain.
+        """.trimIndent()
+
+        val filtered = com.example.voice.SpeechTextFilter.filterForSpeech(aiResponse, "Roman Urdu")
+        assertFalse("Filtered speech must not contain code block markers", filtered.contains("```"))
+        assertFalse("Filtered speech must not contain fun main()", filtered.contains("fun main()"))
+        assertFalse("Filtered speech must not contain println", filtered.contains("println"))
+        assertTrue("Filtered speech must contain introductory explanation", filtered.contains("Yeh raha aapka Kotlin code"))
+        assertTrue("Filtered speech must contain concluding explanation", filtered.contains("Aap isko run kar sakte hain"))
+    }
+
+    @Test
+    fun testSpeechTextFilter_pureCodeReturnsNaturalFallback() {
+        val pureCode = """
+            ```python
+            import os
+            import sys
+            def execute():
+                print("Running")
+            ```
+        """.trimIndent()
+
+        val filtered = com.example.voice.SpeechTextFilter.filterForSpeech(pureCode, "Roman Urdu")
+        assertFalse(filtered.contains("import os"))
+        assertFalse(filtered.contains("def execute"))
+        assertTrue("Should return conversational explanation for pure code", filtered.contains("code generate") || filtered.contains("screen par"))
+    }
+
+    @Test
+    fun testSpeechTextFilter_stripsJsonAndXml() {
+        val jsonResponse = """
+            Here is the requested data:
+            {"status": "success", "userId": 12345, "token": "abc_xyz"}
+            Please check it out.
+        """.trimIndent()
+
+        val filtered = com.example.voice.SpeechTextFilter.filterForSpeech(jsonResponse, "English")
+        assertFalse(filtered.contains("userId"))
+        assertFalse(filtered.contains("token"))
+        assertTrue(filtered.contains("Here is the requested data"))
+        assertTrue(filtered.contains("Please check it out"))
+    }
+
+    @Test
+    fun testSpeechTextFilter_stripsStackTracesAndLogs() {
+        val errorResponse = """
+            An error occurred while compiling:
+            java.lang.NullPointerException: Attempt to invoke virtual method on a null object reference
+                at com.example.Main.execute(Main.kt:42)
+                at com.example.Main.start(Main.kt:15)
+            Please fix the null pointer reference in Main.kt.
+        """.trimIndent()
+
+        val filtered = com.example.voice.SpeechTextFilter.filterForSpeech(errorResponse, "English")
+        assertFalse(filtered.contains("NullPointerException"))
+        assertFalse(filtered.contains("at com.example.Main"))
+        assertTrue(filtered.contains("An error occurred") || filtered.contains("Please fix"))
+    }
+
+    @Test
+    fun testOllamaModelCapabilityDetection() {
+        val visionModel = com.example.ai.provider.OllamaModelInfo(
+            name = "llama3.2-vision:11b",
+            parameterSize = "11B",
+            supportsVision = true,
+            supportsCode = false,
+            supportsReasoning = false,
+            sizeBytes = 7900000000L
+        )
+        assertTrue(visionModel.supportsVision)
+        assertEquals("7.4 GB", visionModel.formattedSize)
+
+        val coderModel = com.example.ai.provider.OllamaModelInfo(
+            name = "qwen2.5-coder:7b",
+            parameterSize = "7B",
+            supportsVision = false,
+            supportsCode = true,
+            supportsReasoning = false,
+            sizeBytes = 4400000000L
+        )
+        assertTrue(coderModel.supportsCode)
+        assertFalse(coderModel.supportsVision)
+        assertEquals("4.1 GB", coderModel.formattedSize)
+
+        val reasoningModel = com.example.ai.provider.OllamaModelInfo(
+            name = "deepseek-r1:8b",
+            parameterSize = "8B",
+            supportsVision = false,
+            supportsCode = false,
+            supportsReasoning = true,
+            sizeBytes = 4900000000L
+        )
+        assertTrue(reasoningModel.supportsReasoning)
+        assertEquals("4.6 GB", reasoningModel.formattedSize)
+    }
 }
 

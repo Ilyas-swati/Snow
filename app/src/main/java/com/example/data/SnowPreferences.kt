@@ -130,7 +130,7 @@ class SnowPreferences(context: Context) {
         set(value) = prefs.edit().putFloat(KEY_OLLAMA_TEMPERATURE, value).apply()
 
     var speakTypedResponses: String
-        get() = prefs.getString(KEY_SPEAK_TYPED_RESPONSES, SPEAK_TYPED_ALWAYS) ?: SPEAK_TYPED_ALWAYS
+        get() = prefs.getString(KEY_SPEAK_TYPED_RESPONSES, SPEAK_TYPED_VOICE_ONLY) ?: SPEAK_TYPED_VOICE_ONLY
         set(value) = prefs.edit().putString(KEY_SPEAK_TYPED_RESPONSES, value).apply()
 
     // Image Generation Provider (Req 29)

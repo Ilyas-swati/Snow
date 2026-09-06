@@ -20,8 +20,32 @@ data class OllamaModelInfo(
     val name: String,
     val parameterSize: String = "",
     val supportsVision: Boolean = false,
-    val sizeBytes: Long = 0
-)
+    val supportsCode: Boolean = false,
+    val supportsReasoning: Boolean = false,
+    val supportsTools: Boolean = true,
+    val sizeBytes: Long = 0,
+    val modifiedAt: String = "",
+    val format: String = "",
+    val family: String = ""
+) {
+    val formattedSize: String
+        get() = when {
+            sizeBytes <= 0 -> ""
+            sizeBytes >= 1024L * 1024L * 1024L -> String.format(java.util.Locale.US, "%.1f GB", sizeBytes.toDouble() / (1024 * 1024 * 1024))
+            sizeBytes >= 1024L * 1024L -> String.format(java.util.Locale.US, "%.0f MB", sizeBytes.toDouble() / (1024 * 1024))
+            else -> "$sizeBytes B"
+        }
+
+    val formattedModified: String
+        get() {
+            if (modifiedAt.isBlank()) return ""
+            return try {
+                if (modifiedAt.length >= 10) modifiedAt.substring(0, 10) else modifiedAt
+            } catch (e: Exception) {
+                ""
+            }
+        }
+}
 
 class OllamaAIProvider(
     private val getBaseUrl: () -> String,
@@ -85,14 +109,15 @@ class OllamaAIProvider(
 
 
     /**
-     * Queries /api/tags from Ollama to retrieve all installed models.
+     * Queries /api/tags from Ollama to retrieve all installed models dynamically.
+     * Supports unlimited models (10, 100, 300+) with comprehensive capability detection.
      */
-    suspend fun listModels(customUrl: String? = null): List<OllamaModelInfo> = withContext(Dispatchers.IO) {
+    suspend fun listModels(customUrl: String? = null, customApiKey: String? = null): List<OllamaModelInfo> = withContext(Dispatchers.IO) {
         val baseUrl = (customUrl ?: getBaseUrl()).trim().trimEnd('/')
         val url = "$baseUrl/api/tags"
         try {
             val reqBuilder = Request.Builder().url(url).get()
-            val token = getApiKey()
+            val token = if (!customApiKey.isNullOrBlank()) customApiKey else getApiKey()
             if (token.isNotBlank()) {
                 reqBuilder.addHeader("Authorization", "Bearer $token")
             }
@@ -110,32 +135,61 @@ class OllamaAIProvider(
                 for (i in 0 until modelsArray.length()) {
                     val mObj = modelsArray.getJSONObject(i)
                     val name = mObj.optString("name", "")
+                    if (name.isBlank()) continue
+
                     val size = mObj.optLong("size", 0)
+                    val modifiedAt = mObj.optString("modified_at", "")
                     val details = mObj.optJSONObject("details")
                     val paramSize = details?.optString("parameter_size", "") ?: ""
+                    val format = details?.optString("format", "") ?: ""
+                    val family = details?.optString("family", "") ?: ""
                     val families = details?.optJSONArray("families")
 
-                    var isVision = false
                     val lowerName = name.lowercase()
-                    if (lowerName.contains("vision") || lowerName.contains("llava") ||
-                        lowerName.contains("minicpm-v") || lowerName.contains("moondream") ||
-                        lowerName.contains("bakllava") || lowerName.contains("qwen2-vl") ||
-                        lowerName.contains("mllama")
-                    ) {
-                        isVision = true
-                    }
-                    if (families != null) {
+
+                    // Vision capability detection
+                    var isVision = lowerName.contains("vision") || lowerName.contains("llava") ||
+                            lowerName.contains("minicpm-v") || lowerName.contains("moondream") ||
+                            lowerName.contains("bakllava") || lowerName.contains("qwen2-vl") ||
+                            lowerName.contains("mllama") || lowerName.contains("llama3.2-vision")
+                    if (!isVision && families != null) {
                         for (f in 0 until families.length()) {
                             val fam = families.optString(f, "").lowercase()
                             if (fam.contains("clip") || fam.contains("mllama") || fam.contains("vision")) {
                                 isVision = true
+                                break
                             }
                         }
                     }
 
-                    if (name.isNotBlank()) {
-                        result.add(OllamaModelInfo(name, paramSize, isVision, size))
-                    }
+                    // Code capability detection
+                    val isCode = lowerName.contains("code") || lowerName.contains("coder") ||
+                            lowerName.contains("starcoder") || lowerName.contains("deepseek-coder") ||
+                            lowerName.contains("qwen2.5-coder") || lowerName.contains("codellama")
+
+                    // Reasoning capability detection
+                    val isReasoning = lowerName.contains("r1") || lowerName.contains("deepseek-r1") ||
+                            lowerName.contains("qwq") || lowerName.contains("reasoning")
+
+                    // Tool calling capability detection (all general chat/instruct models, except pure embeddings)
+                    val isEmbedding = lowerName.contains("embed") || lowerName.contains("nomic") ||
+                            lowerName.contains("bge") || lowerName.contains("minilm")
+                    val isTools = !isEmbedding
+
+                    result.add(
+                        OllamaModelInfo(
+                            name = name,
+                            parameterSize = paramSize,
+                            supportsVision = isVision,
+                            supportsCode = isCode,
+                            supportsReasoning = isReasoning,
+                            supportsTools = isTools,
+                            sizeBytes = size,
+                            modifiedAt = modifiedAt,
+                            format = format,
+                            family = family
+                        )
+                    )
                 }
                 result
             }
@@ -396,7 +450,12 @@ class OllamaAIProvider(
     companion object {
         suspend fun fetchInstalledModels(baseUrl: String, apiKey: String = ""): List<String> {
             val provider = OllamaAIProvider({ baseUrl }, { apiKey })
-            return provider.listModels().map { it.name }
+            return provider.listModels(baseUrl, apiKey).map { it.name }
+        }
+
+        suspend fun fetchDetailedModels(baseUrl: String, apiKey: String = ""): List<OllamaModelInfo> {
+            val provider = OllamaAIProvider({ baseUrl }, { apiKey })
+            return provider.listModels(baseUrl, apiKey)
         }
     }
 }

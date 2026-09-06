@@ -226,9 +226,20 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
     private val _isProcessingPrompt = MutableStateFlow(false)
     val isProcessingPrompt: StateFlow<Boolean> = _isProcessingPrompt.asStateFlow()
 
+    private var lastProcessedPrompt: String = ""
+    private var lastProcessedPromptTime: Long = 0L
+
     fun handleUserPrompt(userText: String, capturedImage: Bitmap? = null, isTyped: Boolean = false) {
         val cleanText = userText.trim()
         if (cleanText.isBlank() && capturedImage == null) return
+
+        val now = System.currentTimeMillis()
+        if (cleanText.isNotBlank() && cleanText == lastProcessedPrompt && (now - lastProcessedPromptTime) < 800L && capturedImage == null) {
+            android.util.Log.d("SnowViewModel", "Ignoring duplicate prompt within 800ms: $cleanText")
+            return
+        }
+        lastProcessedPrompt = cleanText
+        lastProcessedPromptTime = now
 
         // 1. High-Priority Global Cancel Intent (Req 35)
         if (VoiceEngine.isInterruptionWord(cleanText)) {
@@ -240,7 +251,6 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
             _isProcessingPrompt.value = false
             _conversationState.value = ConversationState.INTERRUPTED
 
-
             val ackText = when (preferences.languageMode) {
                 SnowPreferences.LANG_UR -> "ٹھیک ہے جانو، رک گئی۔ ❤️"
                 SnowPreferences.LANG_HI -> "ठीक है जानू, रुक गई। ❤️"
@@ -251,21 +261,26 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
             _lastAiResponse.value = ackText
             _statusBannerText.value = "Stopped"
 
+            val stopRequestId = java.util.UUID.randomUUID().toString()
             viewModelScope.launch {
                 val userMsg = ChatMessage(
                     sender = "user",
                     content = cleanText,
-                    language = preferences.languageMode
+                    language = preferences.languageMode,
+                    requestId = stopRequestId,
+                    messageId = "usr_$stopRequestId"
                 )
                 val replyMsg = ChatMessage(
                     sender = "snow",
                     content = ackText,
-                    language = preferences.languageMode
+                    language = preferences.languageMode,
+                    requestId = stopRequestId,
+                    messageId = "asst_$stopRequestId"
                 )
                 database.chatDao().insert(userMsg)
                 database.chatDao().insert(replyMsg)
 
-                if (preferences.autoSpeakEnabled) {
+                if (!isTyped && preferences.autoSpeakEnabled) {
                     _conversationState.value = ConversationState.SPEAKING
                     voiceEngine.speak(ackText, preferences.languageMode)
                 }
@@ -282,6 +297,10 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
         agentManager.cancelCurrentTask()
         voiceEngine.stopSpeaking()
 
+        val turnRequestId = java.util.UUID.randomUUID().toString()
+        val userMessageId = "usr_$turnRequestId"
+        val agentMessageId = "asst_$turnRequestId"
+
         activeConversationJob = viewModelScope.launch {
             _isProcessingPrompt.value = true
             _conversationState.value = ConversationState.THINKING
@@ -289,7 +308,9 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
                 val userMsg = ChatMessage(
                     sender = "user",
                     content = cleanText.ifBlank { "Describe this image" },
-                    language = preferences.languageMode
+                    language = preferences.languageMode,
+                    requestId = turnRequestId,
+                    messageId = userMessageId
                 )
                 database.chatDao().insert(userMsg)
 
@@ -319,31 +340,45 @@ class SnowViewModel(application: Application) : AndroidViewModel(application) {
 
                 _lastAiResponse.value = finalResponse.spokenText
 
-                // Save agent message to database
-                val agentMsg = ChatMessage(
-                    sender = "snow",
-                    content = finalResponse.spokenText,
-                    language = finalResponse.detectedLanguage,
-                    actionSummary = finalResponse.executedToolsSummary
-                )
-                database.chatDao().insert(agentMsg)
+                // Save or update canonical agent message to database (prevent duplicate insertion)
+                val existingAgentMsg = database.chatDao().getMessageByMessageId(agentMessageId)
+                if (existingAgentMsg != null) {
+                    val updated = existingAgentMsg.copy(
+                        content = finalResponse.spokenText,
+                        language = finalResponse.detectedLanguage,
+                        actionSummary = finalResponse.executedToolsSummary
+                    )
+                    database.chatDao().update(updated)
+                } else {
+                    val agentMsg = ChatMessage(
+                        sender = "snow",
+                        content = finalResponse.spokenText,
+                        language = finalResponse.detectedLanguage,
+                        actionSummary = finalResponse.executedToolsSummary,
+                        requestId = turnRequestId,
+                        messageId = agentMessageId
+                    )
+                    database.chatDao().insert(agentMsg)
+                }
 
-                // Determine if TTS should speak response
+                // Determine if TTS should speak response (Strict separation of TEXT OUTPUT from VOICE OUTPUT)
                 val shouldSpeak = if (isTyped) {
-                    when (preferences.speakTypedResponses) {
-                        SnowPreferences.SPEAK_TYPED_ALWAYS -> preferences.autoSpeakEnabled
-                        SnowPreferences.SPEAK_TYPED_VOICE_ONLY -> false
-                        SnowPreferences.SPEAK_TYPED_NEVER -> false
-                        else -> preferences.autoSpeakEnabled
-                    }
+                    preferences.speakTypedResponses == SnowPreferences.SPEAK_TYPED_ALWAYS && preferences.autoSpeakEnabled
                 } else {
                     preferences.autoSpeakEnabled
                 }
 
                 if (shouldSpeak) {
-                    _conversationState.value = ConversationState.SPEAKING
-                    _statusBannerText.value = "Speaking…"
-                    voiceEngine.speak(finalResponse.spokenText, finalResponse.detectedLanguage)
+                    val spokenPortion = com.example.voice.SpeechTextFilter.filterForSpeech(finalResponse.spokenText, finalResponse.detectedLanguage)
+                    if (spokenPortion.isNotBlank()) {
+                        _conversationState.value = ConversationState.SPEAKING
+                        _statusBannerText.value = "Speaking…"
+                        voiceEngine.speak(spokenPortion, finalResponse.detectedLanguage)
+                    } else {
+                        _conversationState.value = ConversationState.IDLE
+                        _statusBannerText.value = "Ready"
+                        voiceEngine.setIdle()
+                    }
                 } else {
                     _conversationState.value = ConversationState.IDLE
                     _statusBannerText.value = "Ready"
